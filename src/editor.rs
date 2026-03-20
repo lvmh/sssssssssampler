@@ -202,7 +202,8 @@ pub(crate) fn create(
                     // ── Rendering view ────────────────────────────────────────
                     {
                         let editor_data = cx.data::<EditorData>().unwrap();
-                        AsciiRenderView::new(cx, editor_data.anim_params.clone());
+                        let frame_buffer = std::sync::Arc::new(std::sync::Mutex::new(None));
+                        AsciiRenderView::new(cx, editor_data.anim_params.clone(), frame_buffer);
                     }
 
                     // ── Preset navigator ──────────────────────────────────────
