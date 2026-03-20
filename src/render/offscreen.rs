@@ -1,10 +1,10 @@
-//! Offscreen wgpu rendering that writes to an RGBA texture
-//! Texture data is readback to CPU for display in Vizia via Image elements
+//! Offscreen wgpu rendering with CPU readback for Vizia display
+//! Renders to GPU texture, reads back to CPU for image display
 
 use wgpu::*;
 use std::sync::{Arc, Mutex};
 
-/// Holds frame data (RGBA8 pixels) ready for display
+/// Frame data ready for display (RGBA8 format)
 #[derive(Clone)]
 pub struct FrameBuffer {
     pub width: u32,
@@ -28,17 +28,15 @@ pub struct OffscreenRenderer {
     queue: Arc<Queue>,
     render_texture: Texture,
     render_target_view: TextureView,
-    readback_buffer: Buffer,
+    staging_buffer: Buffer,
     width: u32,
     height: u32,
-    frame_buffer: Arc<Mutex<FrameBuffer>>,
+    bytes_per_row: u32,
+    current_frame: Arc<Mutex<Option<FrameBuffer>>>,
 }
 
 impl OffscreenRenderer {
-    /// Create a new offscreen renderer
-    ///
-    /// Does NOT bind to a window; instead renders to an offscreen texture
-    /// that can be read back to CPU for display in UI.
+    /// Create a new offscreen renderer that renders to a texture and reads back to CPU
     pub async fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
@@ -63,11 +61,15 @@ impl OffscreenRenderer {
 
         let render_target_view = render_texture.create_view(&TextureViewDescriptor::default());
 
-        // Create readback buffer (padded for alignment)
-        let bytes_per_row = (width * 4 + 255) & !255; // Align to 256 bytes
-        let readback_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("offscreen_readback_buffer"),
-            size: (bytes_per_row * height) as u64,
+        // Staging buffer (padded to wgpu alignment requirement)
+        // wgpu requires: bytes_per_row % 256 == 0
+        let unpadded = width * 4;
+        let bytes_per_row = ((unpadded + 255) / 256) * 256;
+        let total_bytes = (bytes_per_row * height) as u64;
+
+        let staging_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("offscreen_staging_buffer"),
+            size: total_bytes,
             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -77,16 +79,12 @@ impl OffscreenRenderer {
             queue,
             render_texture,
             render_target_view,
-            readback_buffer,
+            staging_buffer,
             width,
             height,
-            frame_buffer: Arc::new(Mutex::new(FrameBuffer::new(width, height))),
+            bytes_per_row,
+            current_frame: Arc::new(Mutex::new(Some(FrameBuffer::new(width, height)))),
         })
-    }
-
-    /// Get current frame buffer for display
-    pub fn frame_buffer(&self) -> Arc<Mutex<FrameBuffer>> {
-        self.frame_buffer.clone()
     }
 
     /// Get render target view for wgpu rendering
@@ -94,58 +92,101 @@ impl OffscreenRenderer {
         &self.render_target_view
     }
 
-    /// Submit a command buffer and schedule readback
-    pub fn submit(&self, command_buffer: CommandBuffer) {
-        self.queue.submit(std::iter::once(command_buffer));
-
-        // Schedule readback of rendered frame
-        self.schedule_readback();
+    /// Get current frame buffer (last readback result)
+    pub fn current_frame(&self) -> Arc<Mutex<Option<FrameBuffer>>> {
+        self.current_frame.clone()
     }
 
-    /// Schedule CPU readback of current frame
-    /// Copies GPU texture to readback buffer
-    fn schedule_readback(&self) {
-        let width = self.width;
-        let height = self.height;
-        let render_texture = &self.render_texture;
-        let readback_buffer = &self.readback_buffer;
-        let bytes_per_row = (width * 4 + 255) & !255;
+    /// Submit render command buffer and schedule readback
+    pub fn submit_and_readback(&self, command_buffer: CommandBuffer) {
+        // Submit render commands
+        self.queue.submit(std::iter::once(command_buffer));
 
-        // Create copy command
+        // Schedule texture copy to staging buffer
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("readback_encoder"),
         });
 
         encoder.copy_texture_to_buffer(
             ImageCopyTexture {
-                texture: render_texture,
+                texture: &self.render_texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
             ImageCopyBuffer {
-                buffer: readback_buffer,
+                buffer: &self.staging_buffer,
                 layout: ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: Some(height),
+                    bytes_per_row: Some(self.bytes_per_row),
+                    rows_per_image: Some(self.height),
                 },
             },
             Extent3d {
-                width,
-                height,
+                width: self.width,
+                height: self.height,
                 depth_or_array_layers: 1,
             },
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
-
-        // Note: Actual buffer mapping would require async/await
-        // For now, this schedules the copy and subsequent poll() will process it
     }
 
-    /// Poll for GPU readback completion (call each frame from UI thread)
-    pub fn poll_gpu(&self) {
-        self.device.poll(Maintain::Poll);
+    /// Wait for GPU readback to complete and return frame buffer
+    /// This is a blocking operation that polls the device
+    pub fn read_frame_blocking(&self) -> Option<FrameBuffer> {
+        // Map the staging buffer
+        let buffer_slice = self.staging_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let tx_clone = tx.clone();
+        buffer_slice.map_async(MapMode::Read, move |result| {
+            let _ = tx_clone.send(result);
+        });
+
+        // Poll device until the mapping completes (max 5 seconds timeout)
+        let start = std::time::Instant::now();
+        loop {
+            self.device.poll(Maintain::Poll);
+
+            match rx.try_recv() {
+                Ok(Ok(())) => break, // Mapping successful
+                Ok(Err(e)) => {
+                    eprintln!("GPU mapping error: {:?}", e);
+                    return None;
+                }
+                Err(_) => {
+                    // Still waiting
+                    if start.elapsed().as_secs() > 5 {
+                        eprintln!("GPU readback timeout");
+                        return None;
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+            }
+        }
+
+        // Read the mapped data
+        let mapped_range = buffer_slice.get_mapped_range();
+        let mut frame_buffer = FrameBuffer::new(self.width, self.height);
+
+        // Copy pixels, removing padding
+        for row in 0..self.height {
+            let src_offset = (row * self.bytes_per_row) as usize;
+            let dst_offset = (row * self.width * 4) as usize;
+            let row_bytes = (self.width * 4) as usize;
+            frame_buffer.pixels[dst_offset..dst_offset + row_bytes]
+                .copy_from_slice(&mapped_range[src_offset..src_offset + row_bytes]);
+        }
+
+        drop(mapped_range);
+        self.staging_buffer.unmap();
+
+        // Cache the frame
+        if let Ok(mut frame) = self.current_frame.lock() {
+            *frame = Some(frame_buffer.clone());
+        }
+
+        Some(frame_buffer)
     }
 }

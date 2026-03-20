@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 mod editor;
 mod editor_view;
+mod ascii_grid_view;
 mod render;
 mod parameter_remapping;
 mod audio_feed;

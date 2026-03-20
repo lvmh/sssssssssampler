@@ -6,6 +6,7 @@ pub mod ascii_render;
 pub mod motion;
 pub mod instancing;
 pub mod offscreen;
+pub mod ui_sync;
 
 pub use ascii_render::AsciiRenderer;
 pub use color_system::{Color, ColorPalette};
@@ -15,3 +16,4 @@ pub use layer_engine::{LayerEngine, LayerState};
 pub use motion::MotionSystem;
 pub use instancing::{GlyphInstance, generate_instances};
 pub use offscreen::{OffscreenRenderer, FrameBuffer};
+pub use ui_sync::UiRenderer;
