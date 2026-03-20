@@ -3,6 +3,7 @@ use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
 
 mod editor;
+mod render;
 
 // ─── Plugin struct ────────────────────────────────────────────────────────────
 
