@@ -115,14 +115,10 @@ fn get_grid_char(
     grid_width: u32,
     grid_height: u32,
 ) -> Option<char> {
-    let image = ascii_bank.get_image(image_idx)?;
+    use crate::ascii_bank::CHARSET;
 
-    // Apply spatial offset
-    let src_x = grid_x + spatial_offset.0;
-    let src_y = grid_y + spatial_offset.1;
-
-    // Clip to source image bounds
-    if src_x < 0 || src_y < 0 || src_x >= image.width() as i32 || src_y >= image.height() as i32 {
+    // Check bounds
+    if image_idx >= ascii_bank.len() {
         return None;
     }
 
@@ -131,7 +127,24 @@ fn get_grid_char(
         return None;
     }
 
-    image.get_char(src_x as usize, src_y as usize)
+    // Apply spatial offset
+    let src_x = grid_x + spatial_offset.0;
+    let src_y = grid_y + spatial_offset.1;
+
+    // Clip to source image bounds
+    if src_x < 0 || src_y < 0 || src_x >= ascii_bank.width as i32 || src_y >= ascii_bank.height as i32 {
+        return None;
+    }
+
+    // Get density index from ASCII bank
+    let density_idx = ascii_bank.get_cell(image_idx, src_x as usize, src_y as usize) as usize;
+
+    // Map to character
+    if density_idx < CHARSET.len() {
+        Some(CHARSET[density_idx])
+    } else {
+        Some(' ')
+    }
 }
 
 /// Map ASCII character to glyph index (0–127 for printable ASCII)
