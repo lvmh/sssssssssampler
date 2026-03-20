@@ -7,6 +7,7 @@ use std::sync::Arc;
 use nih_plug_vizia::vizia::binding::Data;
 
 use crate::SssssssssamplerParams;
+use crate::editor_view::AsciiRenderView;
 
 pub(crate) const WINDOW_WIDTH: u32 = 540;
 pub(crate) const WINDOW_HEIGHT: u32 = 270;
