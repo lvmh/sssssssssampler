@@ -18,6 +18,16 @@ pub struct AnimParams {
     pub jitter: f32,
     /// 0.0–1.0 filter cutoff normalised
     pub filter_cutoff_norm: f32,
+    /// RMS amplitude (0.0–1.0)
+    pub rms: f32,
+    /// Whether a transient is currently active
+    pub transient_active: bool,
+    /// Signal instability metric (0.0–1.0)
+    pub instability: f32,
+    /// Quantization noise level (0.0–1.0)
+    pub quantization: f32,
+    /// Number of active layers (0.0+)
+    pub layer_count: f32,
 }
 
 impl Default for AnimParams {
@@ -28,6 +38,11 @@ impl Default for AnimParams {
             bit_depth_norm: 0.5,
             jitter: 0.0,
             filter_cutoff_norm: 0.9,
+            rms: 0.0,
+            transient_active: false,
+            instability: 0.0,
+            quantization: 0.0,
+            layer_count: 1.0,
         }
     }
 }
