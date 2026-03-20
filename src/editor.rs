@@ -105,7 +105,7 @@ pub enum EditorEvent {
 }
 
 impl Model for EditorData {
-    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
         event.map(|e: &EditorEvent, _| match e {
             EditorEvent::SetTheme(t) => self.theme = *t,
             EditorEvent::PrevPreset => {
@@ -121,48 +121,6 @@ impl Model for EditorData {
                 }
             }
         });
-
-        // Update frame buffer from animation params (60fps target)
-        if let (Ok(anim), Ok(mut fb)) = (
-            self.anim_params.lock().map(|a| a.clone()),
-            self.frame_buffer.lock(),
-        ) {
-            // Generate checkerboard pattern driven by audio parameters
-            let width = 36;
-            let height = 46;
-            let mut pixels = vec![0u8; (width * height * 4) as usize];
-
-            let brightness = 0.3 + (anim.rms * 0.7);
-
-            for row in 0..height {
-                for col in 0..width {
-                    let idx = ((row * width + col) * 4) as usize;
-                    let checkerboard = (col + row) % 2 == 0;
-
-                    let (r, g, b) = if checkerboard {
-                        // Soft Violet
-                        let v = (brightness * 122.0) as u8;
-                        (v, (brightness * 108.0) as u8, 255)
-                    } else {
-                        // Muted Green
-                        ((brightness * 76.0) as u8, (brightness * 175.0) as u8, (brightness * 130.0) as u8)
-                    };
-
-                    pixels[idx] = r;
-                    pixels[idx + 1] = g;
-                    pixels[idx + 2] = b;
-                    pixels[idx + 3] = 255; // Alpha
-                }
-            }
-
-            *fb = Some(crate::render::FrameBuffer {
-                width,
-                height,
-                pixels,
-            });
-        }
-
-        // Vizia will redraw automatically when data changes
     }
 }
 
@@ -210,7 +168,6 @@ pub(crate) fn create(
         ViziaTheming::Custom,
         move |cx, gui_ctx| {
             let frame_buffer = Arc::new(Mutex::new(None));
-            let frame_buffer_clone = frame_buffer.clone();
 
             EditorData {
                 params: params.clone(),
@@ -251,7 +208,7 @@ pub(crate) fn create(
                     // ── Rendering view ────────────────────────────────────────
                     {
                         let editor_data = cx.data::<EditorData>().unwrap();
-                        AsciiGridDisplay::new(editor_data.frame_buffer.clone())
+                        AsciiGridDisplay::new(editor_data.anim_params.clone())
                             .build(cx);
                     }
 

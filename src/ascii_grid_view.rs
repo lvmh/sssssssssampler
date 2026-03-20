@@ -1,20 +1,20 @@
 use nih_plug_vizia::vizia::prelude::*;
 use std::sync::{Arc, Mutex};
-use crate::render::FrameBuffer;
+use crate::AnimationParams;
 
-/// Custom view that displays frame buffer as ASCII grid
+/// Custom view that displays animated checkerboard grid
 pub struct AsciiGridDisplay {
-    frame_buffer: Arc<Mutex<Option<FrameBuffer>>>,
+    anim_params: Arc<Mutex<AnimationParams>>,
 }
 
 impl AsciiGridDisplay {
-    pub fn new(frame_buffer: Arc<Mutex<Option<FrameBuffer>>>) -> Self {
-        Self { frame_buffer }
+    pub fn new(anim_params: Arc<Mutex<AnimationParams>>) -> Self {
+        Self { anim_params }
     }
 
     pub fn build(self, cx: &mut Context) -> Handle<Self> {
         Self {
-            frame_buffer: self.frame_buffer,
+            anim_params: self.anim_params,
         }
         .build(cx)
         .size(Stretch(1.0))
@@ -22,7 +22,4 @@ impl AsciiGridDisplay {
     }
 }
 
-impl View for AsciiGridDisplay {
-    // Frame buffer display container
-    // Uses Element styling and layout system
-}
+impl View for AsciiGridDisplay {}

@@ -132,6 +132,18 @@
     border-width: 1px;
 }
 
+/* ─── ASCII Grid Display ─────────────────────────────────────────────── */
+
+ascii-grid-display {
+    flex-grow: 1;
+    border-radius: 0;
+    background-color: #1e1e2f;
+    margin-left: 0;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
    ║  NONI LIGHT — fresh lime green daylight                                   ║
