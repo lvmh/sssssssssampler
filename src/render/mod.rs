@@ -5,3 +5,4 @@ pub mod layer_engine;
 pub mod ascii_render;
 
 pub use ascii_render::AsciiRenderer;
+pub use glyph_atlas::{GlyphAtlas, GlyphInfo};
