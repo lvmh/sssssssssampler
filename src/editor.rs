@@ -206,11 +206,9 @@ pub(crate) fn create(
                     .class("header");
 
                     // ── Rendering view ────────────────────────────────────────
-                    {
-                        let editor_data = cx.data::<EditorData>().unwrap();
-                        AsciiGridDisplay::new(editor_data.anim_params.clone())
-                            .build(cx);
-                    }
+                    Element::new(cx)
+                        .size(Stretch(1.0))
+                        .background_color(Color::rgb(30, 30, 47));
 
                     // ── Preset navigator ──────────────────────────────────────
                     HStack::new(cx, |cx| {

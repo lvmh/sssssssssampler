@@ -1,37 +1,110 @@
-# Display Bridge Complete — ASCII Grid Ready
+# Display Bridge Status — Stabilization Phase
 
 **Date:** 2026-03-21 (Continuation Session)
-**Status:** ✅ **DISPLAY BRIDGE IMPLEMENTED** — ASCII Grid Now Visible
+**Status:** ⚠️ **PLUGIN STABLE BUT DISPLAY INCOMPLETE** — Crash Fixed, Grid Rendering Deferred
 
 ---
 
-## What Was Built This Session
+## Session Events
 
-### Phase 1: CPU Readback (✅ COMPLETE)
-- `src/render/offscreen.rs` — Full implementation
-  - `OffscreenRenderer::read_frame_blocking()` synchronously maps GPU texture to CPU
-  - Handles wgpu alignment requirements (256-byte row padding)
-- `src/render/ui_sync.rs` — Synchronous frame generation
-  - `UiRenderer` generates frames on-demand without async complexity
+### Initial: Crash on Plugin Load
+- Plugin crashed Ableton when editor window opened
+- Root cause: Infinite background thread spawned during editor creation updating frame buffer every ~16ms
+- Lock contention between audio DSP thread and spawned frame update thread
+- **Resolution:** Removed infinite thread, reverted to stable state
 
-### Phase 2: Vizia Display (✅ COMPLETE)
-- `src/ascii_grid_view.rs` — Custom AsciiGridDisplay View
-  - Renders frame buffer directly in Vizia
-  - Updates automatically on frame changes
-- `src/editor.rs` — Model integration
-  - EditorData now holds `frame_buffer: Arc<Mutex<Option<FrameBuffer>>>`
-  - Model event handler updates frame buffer every cycle
-
-### Phase 3: Frame Loop Integration (✅ COMPLETE)
-- Frame buffer updated in `EditorData::event()`
-- Checkerboard pattern driven by `anim_params.rms`
-- Soft Violet (122, 108, 255) + Muted Green (76, 175, 130) colors
-- Brightness: `0.3 + (rms * 0.7)` for audio reactivity
-- Redraws triggered automatically by Vizia
+### Current: Plugin Loads Successfully
+- ✅ Plugin opens without crashing
+- ✅ Audio DSP running (sample rate reduction, bit depth crushing, jitter, filtering)
+- ✅ RMS analysis flowing into `AnimationParams`
+- ✅ Theme switching working
+- ✅ Preset navigation working
+- ✅ Parameter sliders responsive
+- ❌ ASCII grid not yet displayed
+- ❌ Audio reactivity not visible (but data is flowing)
 
 ---
 
-## ASCII Grid Is Now Visible
+## Architectural Challenges Identified
+
+### Challenge 1: Threading Model
+- **Problem:** Frame buffer updates need to happen continuously at 60fps
+- **Constraints:**
+  - Can't spawn infinite threads (DAW lifecycle issues, lock contention)
+  - Can't update from UI event handler every frame (too aggressive, causes crashes)
+  - DSP thread runs independently on audio callback (can't directly access UI mutex)
+- **Current Status:** Only one viable approach — integrate frame updates into the UI redraw cycle with proper debouncing
+
+### Challenge 2: Rendering 1,656 Pixels as UI Elements
+- **Problem:** Building a 36×46 grid of Vizia Elements would require 1,656 individual widget instances
+- **Constraints:**
+  - Vizia layout system not designed for dense pixel grids
+  - Each Element adds OS event handling overhead
+  - Canvas API in femtovg (Vizia's renderer) requires understanding type-erased Renderer trait
+- **Current Status:** Need custom draw() implementation or framebuffer texture scaling
+
+### Challenge 3: GPU ↔ Vizia Interop
+- **Problem:** wgpu renders to GPU texture; Vizia renders with OpenGL/Metal
+- **Constraints:** macOS Metal doesn't share textures between contexts without IOSurface
+- **Current Status:** Can't use GPU framebuffer directly; must CPU-readback or use different rendering approach
+
+---
+
+## Next Steps (Prioritized)
+
+### Immediate: Get Visible Feedback (30min)
+1. **Option A**: Render a single pulsing rectangle tied to RMS via a Binding
+   - Simplest: Add a div with background color key bound to brightness value
+   - Pros: Fast, proves audio reactivity works
+   - Cons: Not a grid yet
+2. **Option B**: Use CSS gradients to fake checkerboard
+   - Create repeating gradient background
+   - Pros: All CSS, no Element overhead
+   - Cons: Static pattern, won't update per-frame
+
+### Phase 2: Real Grid Rendering (1-2 hours)
+- Implement proper frame buffer update mechanism:
+  - Use channel-based communication (crossbeam) between DSP and UI
+  - Update frame buffer only when RMS changes significantly (debounce)
+  - Render via Canvas API or pre-rendered image texture
+- Options:
+  1. **Canvas draw()** — Render checkerboard on-demand in View::draw()
+  2. **Texture scaling** — Render 36×46 grid to texture, scale up in Vizia
+  3. **CSS animations** — Use Vizia animations + state machine
+
+### Phase 3: Optimization (Optional)
+- GPU interop (IOSurface on macOS)
+- Streaming GPU→CPU with ringbuffer
+- Per-frame animation layer system
+
+---
+
+## Implementation Options Evaluated
+
+### ❌ Infinite Background Thread
+- Spawns at startup, updates every 16ms
+- **Result:** Lock contention, UI thread stalls, crashes DAW
+- **Reason:** Vizia model events aren't frequent enough; background thread dominates
+
+### ❌ EditorData::event() Frame Updates
+- Updates frame buffer in Model::event() handler
+- **Result:** Generates too many allocations, blocks until lock acquired
+- **Reason:** Event handler fired too frequently, Vector allocations add up
+
+### ✅ Deferred Rendering in View::draw()
+- Update frame buffer during Vizia's draw pass
+- **Status:** Not yet implemented due to Canvas API complexity
+- **Effort:** Medium (understand femtovg, Vizia rendering lifecycle)
+
+### ✅ CSS-based Animation
+- Pure CSS gradient checkerboard with pulsing keyframes
+- **Status:** Simplest, can implement immediately
+- **Effort:** Low
+- **Trade-off:** Static pattern, no per-pixel audio reactivity
+
+---
+
+## ASCII Grid Display (Current State)
 
 ### What You'll See When You Open the Plugin
 
