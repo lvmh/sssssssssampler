@@ -125,6 +125,29 @@ impl Model for EditorData {
 }
 
 impl EditorData {
+    /// Generate grid color from RMS brightness
+    fn grid_color(rms: f32, checkerboard: bool) -> Color {
+        let brightness = 0.3 + (rms * 0.7);
+
+        let (r, g, b) = if checkerboard {
+            // Soft Violet: (122, 108, 255)
+            (
+                (brightness * 122.0 / 255.0 * 255.0) as u8,
+                (brightness * 108.0 / 255.0 * 255.0) as u8,
+                255,
+            )
+        } else {
+            // Muted Green: (76, 175, 130)
+            (
+                (brightness * 76.0 / 255.0 * 255.0) as u8,
+                (brightness * 175.0 / 255.0 * 255.0) as u8,
+                (brightness * 130.0 / 255.0 * 255.0) as u8,
+            )
+        };
+
+        Color::rgb(r, g, b)
+    }
+
     fn apply_preset(&self) {
         let p = &PRESETS[self.preset_idx];
         let setter = ParamSetter::new(&*self.gui_ctx);
