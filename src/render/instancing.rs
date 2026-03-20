@@ -13,7 +13,7 @@
 //!
 //! Each GlyphInstance is exactly 64 bytes for GPU alignment:
 //! - position (8 bytes) + glyph_idx (4) + color (16) + scale (4) + opacity (4)
-//!   + time_offset (4) + padding (8) = 64 bytes
+//!   + time_offset (4) + padding (16) = 60 bytes (padded to 64 by repr(C))
 
 use bytemuck::{Pod, Zeroable};
 use crate::ascii_bank::AsciiBank;
@@ -39,7 +39,7 @@ pub struct GlyphInstance {
     /// Time offset (for animation)
     pub time_offset: i32,
     /// Padding to 64 bytes (required for GPU buffer alignment)
-    pub _pad: [f32; 2],
+    pub _pad: [f32; 6],
 }
 
 /// Generate instances for a single frame
@@ -95,7 +95,7 @@ pub fn generate_instances(
                     scale: 1.0,
                     opacity: 1.0,
                     time_offset: anchor_layer.time_offset,
-                    _pad: [0.0; 2],
+                    _pad: [0.0; 6],
                 });
             }
 
@@ -135,7 +135,7 @@ pub fn generate_instances(
                         scale,
                         opacity,
                         time_offset: layer.time_offset,
-                        _pad: [0.0; 2],
+                        _pad: [0.0; 6],
                     });
                 }
             }
