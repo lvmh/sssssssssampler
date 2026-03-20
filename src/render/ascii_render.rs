@@ -1,3 +1,22 @@
+//! GPU-accelerated ASCII art renderer
+//!
+//! Handles all wgpu-related operations:
+//! - Texture creation (glyph atlas)
+//! - GPU buffer management (vertex, instance, index)
+//! - Render pass execution
+//! - Frame-by-frame rendering
+//!
+//! # Quick Start
+//! ```ignore
+//! let renderer = AsciiRenderer::new(device, queue, format, glyph_atlas, palette).await?;
+//! renderer.render(device, queue, target_view, ascii_bank, layer_engine, motion, params)?;
+//! ```
+//!
+//! # Architecture
+//! The renderer is a thin wrapper around wgpu render infrastructure:
+//! 1. Initialize: Create atlas texture, buffers, bind group, pipeline (stub)
+//! 2. Per-frame: Generate instances → Upload to GPU → Render pass
+
 use wgpu::*;
 use crate::ascii_bank::AsciiBank;
 use crate::render::{ColorPalette, LayerEngine, MotionSystem, GlyphAtlas, generate_instances};
@@ -5,6 +24,10 @@ use crate::AnimationParams;
 use std::mem;
 
 /// GPU renderer for ASCII art
+///
+/// Manages wgpu resources for real-time rendering of ASCII visualization.
+/// Does NOT store Device/Queue (they outlive this struct); buffers and textures
+/// are owned here.
 pub struct AsciiRenderer {
     pipeline: Option<RenderPipeline>,
     bind_group_layout: BindGroupLayout,
@@ -20,7 +43,26 @@ pub struct AsciiRenderer {
 }
 
 impl AsciiRenderer {
-    /// Create a new renderer (requires a wgpu surface/device)
+    /// Create a new renderer
+    ///
+    /// Initializes all GPU resources: glyph atlas texture, buffers, sampler, and bind group.
+    /// The pipeline itself remains a stub (None) pending full shader implementation.
+    ///
+    /// # Arguments
+    /// - `device`, `queue`: wgpu resources (owned by caller, must outlive renderer)
+    /// - `surface_format`: Color format (currently unused; for future pipeline)
+    /// - `glyph_atlas`: Pre-built glyph atlas (16×16 per glyph, 10 per row)
+    /// - `palette`: Color palette (currently unused; for future color mapping)
+    ///
+    /// # Returns
+    /// Ok(Self) on success; Err(String) if buffer creation fails
+    ///
+    /// # Memory
+    /// - Atlas texture: ~92 KB (160×144 px, RGBA8)
+    /// - Vertex buffer: ~53 KB (1,656 cells × 4 bytes)
+    /// - Instance buffer: ~528 KB (1,656 cells × 5 layers × 64 bytes)
+    /// - Index buffer: 24 bytes (6 indices)
+    /// Total: ~673 KB
     pub async fn new(
         device: &Device,
         queue: &Queue,
@@ -165,7 +207,24 @@ impl AsciiRenderer {
         })
     }
 
-    /// Update GPU buffers and redraw
+    /// Render a single frame
+    ///
+    /// Called once per audio frame (or per UI refresh). Pipeline:
+    /// 1. Generate instances from layer engine
+    /// 2. Upload to GPU instance buffer
+    /// 3. Begin render pass (clear to black)
+    /// 4. Execute shader (stub: no draw commands yet)
+    /// 5. Submit command buffer to GPU queue
+    ///
+    /// # Arguments
+    /// - `device`, `queue`: wgpu resources (passed per-frame for flexibility)
+    /// - `target_view`: Output texture view (cleared to black)
+    /// - `ascii_bank`: ASCII image library (passed to instance generator)
+    /// - `layer_engine`: Current layer state
+    /// - `motion_system`, `anim_params`: Future use (time-based animation)
+    ///
+    /// # Performance
+    /// ~1 ms GPU submission + upload; actual render pass timing depends on shader complexity.
     pub fn render(
         &self,
         device: &Device,

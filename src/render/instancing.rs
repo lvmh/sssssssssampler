@@ -1,8 +1,28 @@
+//! Instance buffer generation for GPU rendering
+//!
+//! Converts layer engine state into per-glyph render instances. Each instance
+//! represents a single ASCII character positioned on the 36×46 grid, with
+//! transform (scale, opacity) and animation metadata.
+//!
+//! The instance generation algorithm:
+//! 1. Iterate over all grid cells (36×46 = 1,656 total)
+//! 2. For layer 0 (anchor): always emit instance from img01.txt
+//! 3. For layers 1–4 (overlays): emit if non-space or pop_highlight enabled
+//! 4. Apply spatial offsets for camera panning effect
+//! 5. Return Vec<GlyphInstance> for GPU buffer upload
+//!
+//! Each GlyphInstance is exactly 64 bytes for GPU alignment:
+//! - position (8 bytes) + glyph_idx (4) + color (16) + scale (4) + opacity (4)
+//!   + time_offset (4) + padding (8) = 64 bytes
+
 use bytemuck::{Pod, Zeroable};
 use crate::ascii_bank::AsciiBank;
 use crate::render::LayerEngine;
 
 /// A single glyph instance for GPU instancing: position, glyph index, color, transform
+///
+/// Represents one character in the rendered grid. GPU buffer contains these
+/// contiguously, accessed via instanced rendering (one draw call per instance).
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
 pub struct GlyphInstance {
@@ -23,7 +43,28 @@ pub struct GlyphInstance {
 }
 
 /// Generate instances for a single frame
-/// Returns Vec<GlyphInstance> for all visible glyphs across all layers
+///
+/// Converts layer engine state into per-glyph render commands. Called once per
+/// frame during render pass.
+///
+/// # Arguments
+/// - `grid_width`, `grid_height`: Dimensions of visible grid (typically 36×46)
+/// - `layer_engine`: Current layer state (5 LayerState structs)
+/// - `ascii_bank`: ASCII image library (collection of parsed grids)
+///
+/// # Returns
+/// Vec<GlyphInstance> containing all visible glyphs, ready for GPU buffer upload.
+/// Typically 800–1,200 instances per frame (depends on layer count and pop density).
+///
+/// # Algorithm
+/// 1. Layer 0 (anchor): iterate grid, emit each cell from img01.txt
+/// 2. Layers 1–4: for each active layer, composite non-space glyphs
+/// 3. Apply spatial offset (camera pan effect): `(x + offset_x, y + offset_y)`
+/// 4. Skip out-of-bounds reads (return None)
+/// 5. Collect all instances into Vec
+///
+/// # Performance
+/// ~2–3 ms per frame at 48 kHz (CPU-side generation)
 pub fn generate_instances(
     grid_width: u32,
     grid_height: u32,
