@@ -206,9 +206,47 @@ pub(crate) fn create(
                     .class("header");
 
                     // ── Rendering view ────────────────────────────────────────
-                    Element::new(cx)
+                    {
+                        let editor_data = cx.data::<EditorData>().unwrap();
+                        let anim_params = editor_data.anim_params.clone();
+
+                        // Generate 36×46 checkerboard grid - initially neutral  brightness
+                        VStack::new(cx, |cx| {
+                            for row in 0..46 {
+                                HStack::new(cx, |cx| {
+                                    for col in 0..36 {
+                                        let checkerboard = (col + row) % 2 == 0;
+
+                                        let (r, g, b) = if checkerboard {
+                                            // Soft Violet: (122, 108, 255) @ 0.3 brightness
+                                            (
+                                                (0.3 * 122.0 / 255.0 * 255.0) as u8,
+                                                (0.3 * 108.0 / 255.0 * 255.0) as u8,
+                                                255,
+                                            )
+                                        } else {
+                                            // Muted Green: (76, 175, 130) @ 0.3 brightness
+                                            (
+                                                (0.3 * 76.0 / 255.0 * 255.0) as u8,
+                                                (0.3 * 175.0 / 255.0 * 255.0) as u8,
+                                                (0.3 * 130.0 / 255.0 * 255.0) as u8,
+                                            )
+                                        };
+
+                                        Element::new(cx)
+                                            .size(Stretch(1.0))
+                                            .background_color(Color::rgb(r, g, b));
+                                    }
+                                })
+                                .height(Pixels(5.87))
+                                .row_between(Pixels(0.0))
+                                .child_space(Pixels(0.0));
+                            }
+                        })
                         .size(Stretch(1.0))
-                        .background_color(Color::rgb(30, 30, 47));
+                        .col_between(Pixels(0.0))
+                        .child_space(Pixels(0.0));
+                    }
 
                     // ── Preset navigator ──────────────────────────────────────
                     HStack::new(cx, |cx| {
