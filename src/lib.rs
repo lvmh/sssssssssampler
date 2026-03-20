@@ -3,9 +3,11 @@ use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
 
 mod editor;
+mod editor_view;
 mod render;
 mod parameter_remapping;
 mod audio_feed;
+mod anim_state;
 pub mod ascii_bank;
 pub use parameter_remapping::*;
 pub use audio_feed::AnimationParams;
