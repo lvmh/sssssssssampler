@@ -1,0 +1,7 @@
+target/
+Cargo.lock
+*.vst3
+*.clap
+*.so
+*.dylib
+*.dll
