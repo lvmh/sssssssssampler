@@ -28,6 +28,14 @@ pub struct AnimParams {
     pub quantization: f32,
     /// Number of active layers (0.0+)
     pub layer_count: f32,
+    /// Global drift offset (x, y)
+    pub global_drift: (f32, f32),
+    /// Per-layer motion values (5 layers)
+    pub layer_motion: [f32; 5],
+    /// Region offsets for 4x4 grid (16 regions)
+    pub region_offsets: Vec<(f32, f32)>,
+    /// Total frame count
+    pub frame_count: u64,
 }
 
 impl Default for AnimParams {
@@ -43,6 +51,10 @@ impl Default for AnimParams {
             instability: 0.0,
             quantization: 0.0,
             layer_count: 1.0,
+            global_drift: (0.0, 0.0),
+            layer_motion: [0.0; 5],
+            region_offsets: vec![(0.0, 0.0); 16],
+            frame_count: 0,
         }
     }
 }
