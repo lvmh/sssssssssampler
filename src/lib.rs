@@ -269,7 +269,11 @@ impl Plugin for Sssssssssampler {
     fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.params.editor_state.clone())
+        editor::create(
+            self.params.clone(),
+            self.params.editor_state.clone(),
+            self.audio_feed.shared_params.clone(),
+        )
     }
 
     fn initialize(

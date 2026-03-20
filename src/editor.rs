@@ -7,7 +7,9 @@ use std::sync::Arc;
 use nih_plug_vizia::vizia::binding::Data;
 
 use crate::SssssssssamplerParams;
+use crate::AnimationParams;
 use crate::editor_view::AsciiRenderView;
+use std::sync::Mutex;
 
 pub(crate) const WINDOW_WIDTH: u32 = 540;
 pub(crate) const WINDOW_HEIGHT: u32 = 270;
@@ -154,6 +156,7 @@ pub(crate) fn default_state() -> Arc<ViziaState> {
 pub(crate) fn create(
     params: Arc<SssssssssamplerParams>,
     editor_state: Arc<ViziaState>,
+    anim_params: Arc<Mutex<AnimationParams>>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(
         editor_state,
