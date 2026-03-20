@@ -5,8 +5,11 @@ use std::sync::Arc;
 mod editor;
 mod render;
 mod parameter_remapping;
+mod audio_feed;
+mod anim_state;
 pub mod ascii_bank;
 pub use parameter_remapping::*;
+pub use audio_feed::AnimationParams;
 
 // ─── Plugin struct ────────────────────────────────────────────────────────────
 
@@ -19,6 +22,7 @@ struct Sssssssssampler {
     last_filter_step: f32,
     last_filter_cutoff: f32,
     last_filter_poles: i32,
+    audio_feed: audio_feed::AudioFeed,
 }
 
 impl Default for Sssssssssampler {
@@ -32,6 +36,7 @@ impl Default for Sssssssssampler {
             last_filter_step: -1.0,
             last_filter_cutoff: -1.0,
             last_filter_poles: -1,
+            audio_feed: audio_feed::AudioFeed::default(),
         }
     }
 }
@@ -303,14 +308,19 @@ impl Plugin for Sssssssssampler {
             self.last_filter_cutoff = -1.0;
         }
 
+        // Collect current parameter values for audio feed
+        let target_sr     = self.params.target_sr.value();
+        let bit_depth     = self.params.bit_depth.value();
+        let jitter        = self.params.jitter.value();
+
         for channel_samples in buffer.iter_samples() {
-            let target_sr     = self.params.target_sr.smoothed.next();
-            let bit_depth     = self.params.bit_depth.smoothed.next();
-            let jitter        = self.params.jitter.smoothed.next();
+            let target_sr_smooth  = self.params.target_sr.smoothed.next();
+            let bit_depth_smooth  = self.params.bit_depth.smoothed.next();
+            let jitter_smooth     = self.params.jitter.smoothed.next();
             let mix           = self.params.mix.smoothed.next();
             let filter_cutoff = self.params.filter_cutoff.smoothed.next();
 
-            let step = (target_sr / host_sr).min(1.0);
+            let step = (target_sr_smooth / host_sr).min(1.0);
 
             // Lazy coefficient update when SR or cutoff shifts meaningfully.
             if (step - self.last_filter_step).abs() > 0.0002
@@ -330,19 +340,26 @@ impl Plugin for Sssssssssampler {
                     self.phase[ch] -= 1.0;
                     self.held[ch] = dry;
                 }
-                let jitter_amount = jitter * step * 0.5 * lcg_rand(&mut rng_state);
+                let jitter_amount = jitter_smooth * step * 0.5 * lcg_rand(&mut rng_state);
                 self.phase[ch] += step + jitter_amount;
 
                 // ── Bit crush ──────────────────────────────────────────────
-                let mut wet = crush(self.held[ch], bit_depth);
+                let mut wet = crush(self.held[ch], bit_depth_smooth);
 
                 // ── Reconstruction filter ──────────────────────────────────
                 wet = self.filter.process(wet, ch, poles);
 
                 // ── Dry/wet ────────────────────────────────────────────────
-                *sample = dry + (wet - dry) * mix;
+                let output = dry + (wet - dry) * mix;
+                *sample = output;
+
+                // ── Feed audio analyzer ────────────────────────────────────
+                self.audio_feed.push_sample(output);
             }
         }
+
+        // Update animation parameters with current DSP values
+        self.audio_feed.update(target_sr, bit_depth, jitter);
 
         ProcessStatus::Normal
     }
