@@ -91,6 +91,8 @@ pub struct EditorData {
     pub preset_idx: usize,
     #[lens(ignore)]
     pub gui_ctx: Arc<dyn GuiContext>,
+    #[lens(ignore)]
+    pub anim_params: Arc<Mutex<AnimationParams>>,
 }
 
 pub enum EditorEvent {
@@ -167,6 +169,7 @@ pub(crate) fn create(
                 theme: Theme::NoniDark,
                 preset_idx: DEFAULT_PRESET,
                 gui_ctx: gui_ctx.clone(),
+                anim_params: anim_params.clone(),
             }
             .build(cx);
 
@@ -195,6 +198,12 @@ pub(crate) fn create(
                         .class("theme-switcher");
                     })
                     .class("header");
+
+                    // ── Rendering view ────────────────────────────────────────
+                    {
+                        let editor_data = cx.data::<EditorData>().unwrap();
+                        AsciiRenderView::new(cx, editor_data.anim_params.clone());
+                    }
 
                     // ── Preset navigator ──────────────────────────────────────
                     HStack::new(cx, |cx| {

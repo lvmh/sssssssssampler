@@ -1,12 +1,11 @@
 use nih_plug_vizia::vizia::prelude::*;
 use std::sync::{Arc, Mutex};
 use crate::AnimationParams;
-use crate::ascii_bank::AsciiBank;
 
 /// Vizia view that embeds a wgpu render surface
 pub struct AsciiRenderView {
     /// Animation parameters shared from DSP loop (via Arc<Mutex<>>)
-    anim_params: Arc<Mutex<AnimationParams>>,
+    pub anim_params: Arc<Mutex<AnimationParams>>,
 }
 
 impl AsciiRenderView {
@@ -20,7 +19,6 @@ impl AsciiRenderView {
 }
 
 impl View for AsciiRenderView {
-    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
-        // TODO: Integrate wgpu rendering into Vizia canvas
-    }
+    // No custom draw needed — the deep indigo background color handles rendering
+    // Full wgpu integration is pending Vizia raw window handle access
 }
