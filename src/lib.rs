@@ -4,23 +4,17 @@ use std::sync::Arc;
 
 mod editor;
 
-// ─── Machine presets ────────────────────────────────────────────────────────
-// Classic rates for reference (used in preset descriptions):
-//   SP-1200      26,040 Hz  12-bit
-//   Akai S950    39,375 Hz  12-bit
-//   Akai S612    31,250 Hz  12-bit
-//   MPC3000      44,100 Hz  16-bit (still counts)
-//   E-mu SP-12   27,500 Hz  12-bit
-
 // ─── Plugin struct ────────────────────────────────────────────────────────────
 
 struct Sssssssssampler {
     params: Arc<SssssssssamplerParams>,
     sample_rate: f32,
-    /// Phase accumulator per channel — when it crosses 1.0 we latch a new sample.
     phase: [f32; 2],
-    /// The held (latched) sample value per channel.
     held: [f32; 2],
+    filter: FilterState,
+    last_filter_step: f32,
+    last_filter_cutoff: f32,
+    last_filter_poles: i32,
 }
 
 impl Default for Sssssssssampler {
@@ -28,8 +22,12 @@ impl Default for Sssssssssampler {
         Self {
             params: Arc::new(SssssssssamplerParams::default()),
             sample_rate: 44_100.0,
-            phase: [1.0; 2], // start at 1.0 so the very first sample is latched immediately
+            phase: [1.0; 2],
             held: [0.0; 2],
+            filter: FilterState::new(),
+            last_filter_step: -1.0,
+            last_filter_cutoff: -1.0,
+            last_filter_poles: -1,
         }
     }
 }
@@ -38,26 +36,31 @@ impl Default for Sssssssssampler {
 
 #[derive(Params)]
 pub struct SssssssssamplerParams {
-    /// Persists the editor window state (position, size).
     #[persist = "editor-state"]
     pub editor_state: Arc<ViziaState>,
 
-    /// The effective playback sample rate.
-    /// SP-1200 ≈ 26 kHz, S950 ≈ 39 kHz, S612 ≈ 31 kHz, SP-12 ≈ 27.5 kHz.
     #[id = "target_sr"]
     pub target_sr: FloatParam,
 
-    /// Bit depth for quantisation.  12-bit = MPC/SP magic, lower = absolute carnage.
     #[id = "bit_depth"]
     pub bit_depth: FloatParam,
 
-    /// Adds random timing jitter to the sample-clock — dirtier/more organic.
     #[id = "jitter"]
     pub jitter: FloatParam,
 
-    /// Dry/wet blend.
     #[id = "mix"]
     pub mix: FloatParam,
+
+    /// Filter cutoff as a fraction of target Nyquist.
+    /// 1.0 = fully open (tracks the machine's own Nyquist — transparent reconstruction).
+    /// Sweep down to add machine-specific filter character.
+    #[id = "filter_cutoff"]
+    pub filter_cutoff: FloatParam,
+
+    /// Filter pole count — 2.0 = 2-pole LP (SP-1200/SP-12 style),
+    /// 4.0 = 4th-order Butterworth (S950/S612/MPC3000/SP-303 style).
+    #[id = "filter_poles"]
+    pub filter_poles: FloatParam,
 }
 
 impl Default for SssssssssamplerParams {
@@ -67,11 +70,10 @@ impl Default for SssssssssamplerParams {
 
             target_sr: FloatParam::new(
                 "Sample Rate",
-                26_040.0, // SP-1200 out of the box
+                39_375.0,
                 FloatRange::Skewed {
                     min: 1_000.0,
                     max: 96_000.0,
-                    // skew lets you spend more resolution in the lo-fi zone
                     factor: FloatRange::skew_factor(-2.0),
                 },
             )
@@ -85,14 +87,13 @@ impl Default for SssssssssamplerParams {
                 FloatRange::Linear { min: 1.0, max: 24.0 },
             )
             .with_smoother(SmoothingStyle::Linear(30.0))
-            // fractional bit depths sound wild — keep the resolution
             .with_step_size(0.1)
             .with_unit(" bit")
             .with_value_to_string(formatters::v2s_f32_rounded(1)),
 
             jitter: FloatParam::new(
                 "Jitter",
-                0.0,
+                0.01,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
             .with_smoother(SmoothingStyle::Linear(30.0))
@@ -109,28 +110,121 @@ impl Default for SssssssssamplerParams {
             .with_unit("%")
             .with_value_to_string(formatters::v2s_f32_percentage(1))
             .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            filter_cutoff: FloatParam::new(
+                "Filter Cutoff",
+                1.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            )
+            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_unit("%")
+            .with_value_to_string(formatters::v2s_f32_percentage(0))
+            .with_string_to_value(formatters::s2v_f32_percentage()),
+
+            filter_poles: FloatParam::new(
+                "Filter Poles",
+                4.0,
+                FloatRange::Linear { min: 2.0, max: 4.0 },
+            )
+            .with_step_size(2.0)
+            .with_value_to_string(formatters::v2s_f32_rounded(0))
+            .with_unit("-pole"),
         }
     }
 }
 
 // ─── DSP helpers ─────────────────────────────────────────────────────────────
 
-/// Quantise `sample` to `bits` bits of resolution.
-/// With 12 bits: 2^11 = 2048 steps per side → matches classic 12-bit machines.
 #[inline]
 fn crush(sample: f32, bits: f32) -> f32 {
-    // Allow fractional bits for extra weirdness
     let levels = (2.0_f32).powf(bits - 1.0);
     (sample * levels).round() / levels
 }
 
-/// Cheap deterministic pseudo-random float in [-1, 1] from a u64 seed.
-/// LCG — good enough for jitter, costs nothing.
 #[inline]
 fn lcg_rand(state: &mut u64) -> f32 {
-    *state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+    *state = state
+        .wrapping_mul(6_364_136_223_846_793_005)
+        .wrapping_add(1_442_695_040_888_963_407);
     let bits = 0x3F80_0000u32 | ((*state >> 41) as u32 & 0x007F_FFFF);
-    (f32::from_bits(bits) - 1.5) * 2.0 // [-1, 1]
+    (f32::from_bits(bits) - 1.5) * 2.0
+}
+
+// ─── Biquad filter (Direct Form II transposed) ────────────────────────────────
+
+struct BiquadState {
+    b: [f32; 3],
+    a: [f32; 2],
+    z: [[f32; 2]; 2], // per stereo channel
+}
+
+impl BiquadState {
+    fn new() -> Self {
+        Self { b: [1.0, 0.0, 0.0], a: [0.0, 0.0], z: [[0.0; 2]; 2] }
+    }
+
+    /// Audio EQ Cookbook bilinear LPF. fc_norm ∈ (0, 1) where 1 = Nyquist.
+    fn update(&mut self, fc_norm: f32, q: f32) {
+        let w     = std::f32::consts::PI * fc_norm.clamp(0.001, 0.999);
+        let cos_w = w.cos();
+        let sin_w = w.sin();
+        let alpha = sin_w / (2.0 * q);
+        let a0    = 1.0 / (1.0 + alpha);
+        self.b[0] = (1.0 - cos_w) * 0.5 * a0;
+        self.b[1] = (1.0 - cos_w) * a0;
+        self.b[2] = self.b[0];
+        self.a[0] = -2.0 * cos_w * a0;
+        self.a[1] = (1.0 - alpha) * a0;
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32, ch: usize) -> f32 {
+        let y = self.b[0] * x + self.z[ch][0];
+        self.z[ch][0] = self.b[1] * x - self.a[0] * y + self.z[ch][1];
+        self.z[ch][1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+
+    fn reset(&mut self) { self.z = [[0.0; 2]; 2]; }
+}
+
+// ─── Filter topology ──────────────────────────────────────────────────────────
+//
+// 2-pole (SP-1200/SP-12): single biquad, Q = 1/√2 ≈ 0.7071 (Butterworth 2nd order)
+// 4-pole (S950/S612/MPC3000/SP-303): two biquad cascade (4th-order Butterworth)
+//   Stage 1 Q = 1/(2·sin π/8)  ≈ 1.3066
+//   Stage 2 Q = 1/(2·sin 3π/8) ≈ 0.5412
+
+struct FilterState {
+    stage1: BiquadState,
+    stage2: BiquadState,
+}
+
+impl FilterState {
+    fn new() -> Self {
+        Self { stage1: BiquadState::new(), stage2: BiquadState::new() }
+    }
+
+    fn update(&mut self, step: f32, cutoff: f32, poles: i32) {
+        let fc = (step * cutoff).min(0.99);
+        if poles >= 4 {
+            self.stage1.update(fc, 1.3066);
+            self.stage2.update(fc, 0.5412);
+        } else {
+            self.stage1.update(fc, 0.7071);
+        }
+    }
+
+    #[inline]
+    fn process(&mut self, x: f32, ch: usize, poles: i32) -> f32 {
+        let y = self.stage1.process(x, ch);
+        if poles >= 4 { self.stage2.process(y, ch) } else { y }
+    }
+
+    fn reset(&mut self) {
+        self.stage1.reset();
+        self.stage2.reset();
+    }
 }
 
 // ─── Plugin impl ─────────────────────────────────────────────────────────────
@@ -162,9 +256,7 @@ impl Plugin for Sssssssssampler {
     type SysExMessage = ();
     type BackgroundTask = ();
 
-    fn params(&self) -> Arc<dyn Params> {
-        self.params.clone()
-    }
+    fn params(&self) -> Arc<dyn Params> { self.params.clone() }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         editor::create(self.params.clone(), self.params.editor_state.clone())
@@ -183,6 +275,10 @@ impl Plugin for Sssssssssampler {
     fn reset(&mut self) {
         self.phase = [1.0; 2];
         self.held = [0.0; 2];
+        self.filter.reset();
+        self.last_filter_step = -1.0;
+        self.last_filter_cutoff = -1.0;
+        self.last_filter_poles = -1;
     }
 
     fn process(
@@ -194,37 +290,53 @@ impl Plugin for Sssssssssampler {
         let host_sr = self.sample_rate;
         let mut rng_state: u64 = 0x123456789ABCDEF;
 
-        for channel_samples in buffer.iter_samples() {
-            let target_sr = self.params.target_sr.smoothed.next();
-            let bit_depth = self.params.bit_depth.smoothed.next();
-            let jitter = self.params.jitter.smoothed.next();
-            let mix = self.params.mix.smoothed.next();
+        // Pole count is discrete — read once per block, not per sample.
+        let poles = self.params.filter_poles.value().round() as i32;
+        if poles != self.last_filter_poles {
+            self.filter.reset();
+            self.last_filter_poles  = poles;
+            self.last_filter_step   = -1.0;
+            self.last_filter_cutoff = -1.0;
+        }
 
-            // Nominal step; clamp to 1.0 so turning SR all the way up = bypass
+        for channel_samples in buffer.iter_samples() {
+            let target_sr     = self.params.target_sr.smoothed.next();
+            let bit_depth     = self.params.bit_depth.smoothed.next();
+            let jitter        = self.params.jitter.smoothed.next();
+            let mix           = self.params.mix.smoothed.next();
+            let filter_cutoff = self.params.filter_cutoff.smoothed.next();
+
             let step = (target_sr / host_sr).min(1.0);
 
+            // Lazy coefficient update when SR or cutoff shifts meaningfully.
+            if (step - self.last_filter_step).abs() > 0.0002
+                || (filter_cutoff - self.last_filter_cutoff).abs() > 0.001
+            {
+                self.filter.update(step, filter_cutoff, poles);
+                self.last_filter_step   = step;
+                self.last_filter_cutoff = filter_cutoff;
+            }
+
             for (ch, sample) in channel_samples.into_iter().enumerate() {
-                let ch = ch.min(1);
+                let ch  = ch.min(1);
                 let dry = *sample;
 
-                // ── Sample-and-hold SR reduction ──────────────────────────
-                // Check phase BEFORE advancing so the very first sample latches.
+                // ── Sample-and-hold ────────────────────────────────────────
                 if self.phase[ch] >= 1.0 {
                     self.phase[ch] -= 1.0;
                     self.held[ch] = dry;
                 }
-
-                // Jitter: randomly nudge the phase accumulator a little so the
-                // sample clock wobbles — gives that organic, slightly-drunk feel
-                // of aging electrolytic caps in a 40 year old drum machine.
                 let jitter_amount = jitter * step * 0.5 * lcg_rand(&mut rng_state);
                 self.phase[ch] += step + jitter_amount;
 
-                // ── Bit crushing ──────────────────────────────────────────
-                let crushed = crush(self.held[ch], bit_depth);
+                // ── Bit crush ──────────────────────────────────────────────
+                let mut wet = crush(self.held[ch], bit_depth);
 
-                // ── Dry/wet ───────────────────────────────────────────────
-                *sample = dry + (crushed - dry) * mix;
+                // ── Reconstruction filter ──────────────────────────────────
+                wet = self.filter.process(wet, ch, poles);
+
+                // ── Dry/wet ────────────────────────────────────────────────
+                *sample = dry + (wet - dry) * mix;
             }
         }
 
@@ -248,15 +360,11 @@ impl ClapPlugin for Sssssssssampler {
     ];
 }
 
-// ─── VST3 metadata ────────────────────────────────────────────────────────────
-
 impl Vst3Plugin for Sssssssssampler {
-    // 16-byte unique class ID — change this if you fork the plugin
     const VST3_CLASS_ID: [u8; 16] = *b"sssssssssampleer";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Fx, Vst3SubCategory::Filter];
 }
 
-// ─── Exports ─────────────────────────────────────────────────────────────────
 nih_export_clap!(Sssssssssampler);
 nih_export_vst3!(Sssssssssampler);

@@ -14,7 +14,7 @@
 
 .plugin-root {
     width: 540px;
-    height: 230px;
+    height: 270px;
     layout-type: column;
 }
 
@@ -64,6 +64,40 @@
 
 .theme-pill:hover {
     opacity: 0.85;
+}
+
+.preset-row {
+    layout-type: row;
+    child-top: stretch;
+    child-bottom: stretch;
+    child-left: stretch;
+    child-right: stretch;
+    height: 36px;
+    border-bottom-width: 1px;
+}
+
+.preset-arrow {
+    font-size: 10px;
+    font-weight: 700;
+    padding-left: 16px;
+    padding-right: 16px;
+    top: stretch;
+    bottom: stretch;
+    child-top: stretch;
+    child-bottom: stretch;
+}
+
+.preset-arrow:hover {
+    opacity: 0.65;
+}
+
+.preset-name {
+    font-size: 11px;
+    font-weight: 600;
+    child-left: stretch;
+    child-right: stretch;
+    top: stretch;
+    bottom: stretch;
 }
 
 .controls {
@@ -159,6 +193,19 @@
     font-size: 10px;
 }
 
+.theme-noni-light .preset-row {
+    background-color: #e3e7d5;
+    border-bottom-color: #b3bd92;
+}
+
+.theme-noni-light .preset-arrow {
+    color: #535939;
+}
+
+.theme-noni-light .preset-name {
+    color: #6d8000;
+}
+
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
    ║  NONI DARK — deep forest, bright lime accent                              ║
@@ -217,6 +264,19 @@
 .theme-noni-dark .param-slider .label {
     color: #dce1ce;
     font-size: 10px;
+}
+
+.theme-noni-dark .preset-row {
+    background-color: #1d2204;
+    border-bottom-color: #3f4720;
+}
+
+.theme-noni-dark .preset-arrow {
+    color: #838b68;
+}
+
+.theme-noni-dark .preset-name {
+    color: #9bb940;
 }
 
 
@@ -279,6 +339,19 @@
     font-size: 10px;
 }
 
+.theme-paris .preset-row {
+    background-color: #200f1f;
+    border-bottom-color: #443042;
+}
+
+.theme-paris .preset-arrow {
+    color: #91808f;
+}
+
+.theme-paris .preset-name {
+    color: #ff5fff;
+}
+
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
    ║  ROONEY — Old Trafford under floodlights, Man Utd red and gold            ║
@@ -338,4 +411,17 @@
 .theme-rooney .param-slider .label {
     color: #fcf3f2;
     font-size: 10px;
+}
+
+.theme-rooney .preset-row {
+    background-color: #240002;
+    border-bottom-color: #4c1013;
+}
+
+.theme-rooney .preset-arrow {
+    color: #9b6c6a;
+}
+
+.theme-rooney .preset-name {
+    color: #fc000b;
 }

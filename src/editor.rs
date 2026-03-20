@@ -9,7 +9,33 @@ use nih_plug_vizia::vizia::binding::Data;
 use crate::SssssssssamplerParams;
 
 pub(crate) const WINDOW_WIDTH: u32 = 540;
-pub(crate) const WINDOW_HEIGHT: u32 = 230;
+pub(crate) const WINDOW_HEIGHT: u32 = 270;
+
+// ─── Machine presets ──────────────────────────────────────────────────────────
+//
+// poles: 2.0 = 2-pole LP (SP-1200 / SP-12 lineage — under-filtered, gritty)
+//        4.0 = 4-pole Butterworth (S950 / S612 / SP-303 / MPC3000 — clean)
+// cutoff is always set to 1.0 (fully open) on preset load.
+
+struct MachinePreset {
+    name: &'static str,
+    sr: f32,
+    bits: f32,
+    jitter: f32,
+    poles: f32,
+}
+
+const PRESETS: &[MachinePreset] = &[
+    MachinePreset { name: "SP-1200", sr: 26_040.0, bits: 12.0, jitter: 0.01, poles: 2.0 },
+    MachinePreset { name: "SP-12",   sr: 27_500.0, bits: 12.0, jitter: 0.01, poles: 2.0 },
+    MachinePreset { name: "S612",    sr: 31_250.0, bits: 12.0, jitter: 0.01, poles: 4.0 },
+    MachinePreset { name: "SP-303",  sr: 32_000.0, bits: 12.0, jitter: 0.01, poles: 4.0 },
+    MachinePreset { name: "S950",    sr: 39_375.0, bits: 12.0, jitter: 0.01, poles: 4.0 },
+    MachinePreset { name: "MPC3000", sr: 44_100.0, bits: 16.0, jitter: 0.0,  poles: 4.0 },
+];
+
+// S950 — matches the default target_sr in lib.rs (39_375 Hz)
+const DEFAULT_PRESET: usize = 4;
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
@@ -26,26 +52,24 @@ impl Theme {
     fn css_class(self) -> &'static str {
         match self {
             Self::NoniLight => "theme-noni-light",
-            Self::NoniDark => "theme-noni-dark",
-            Self::Paris => "theme-paris",
-            Self::Rooney => "theme-rooney",
+            Self::NoniDark  => "theme-noni-dark",
+            Self::Paris     => "theme-paris",
+            Self::Rooney    => "theme-rooney",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             Self::NoniLight => "noni ☀",
-            Self::NoniDark => "noni ◉",
-            Self::Paris => "paris",
-            Self::Rooney => "rooney",
+            Self::NoniDark  => "noni ◉",
+            Self::Paris     => "paris",
+            Self::Rooney    => "rooney",
         }
     }
 }
 
 impl Data for Theme {
-    fn same(&self, other: &Self) -> bool {
-        self == other
-    }
+    fn same(&self, other: &Self) -> bool { self == other }
 }
 
 const THEMES: [Theme; 4] = [
@@ -61,18 +85,62 @@ const THEMES: [Theme; 4] = [
 pub struct EditorData {
     pub params: Arc<SssssssssamplerParams>,
     pub theme: Theme,
+    pub preset_idx: usize,
+    #[lens(ignore)]
+    pub gui_ctx: Arc<dyn GuiContext>,
 }
 
 pub enum EditorEvent {
     SetTheme(Theme),
+    PrevPreset,
+    NextPreset,
 }
 
 impl Model for EditorData {
     fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
-        event.map(|e: &EditorEvent, _| {
-            let EditorEvent::SetTheme(t) = e;
-            self.theme = *t;
+        event.map(|e: &EditorEvent, _| match e {
+            EditorEvent::SetTheme(t) => self.theme = *t,
+            EditorEvent::PrevPreset => {
+                if self.preset_idx > 0 {
+                    self.preset_idx -= 1;
+                    self.apply_preset();
+                }
+            }
+            EditorEvent::NextPreset => {
+                if self.preset_idx + 1 < PRESETS.len() {
+                    self.preset_idx += 1;
+                    self.apply_preset();
+                }
+            }
         });
+    }
+}
+
+impl EditorData {
+    fn apply_preset(&self) {
+        let p = &PRESETS[self.preset_idx];
+        let setter = ParamSetter::new(&*self.gui_ctx);
+
+        setter.begin_set_parameter(&self.params.target_sr);
+        setter.set_parameter(&self.params.target_sr, p.sr);
+        setter.end_set_parameter(&self.params.target_sr);
+
+        setter.begin_set_parameter(&self.params.bit_depth);
+        setter.set_parameter(&self.params.bit_depth, p.bits);
+        setter.end_set_parameter(&self.params.bit_depth);
+
+        setter.begin_set_parameter(&self.params.jitter);
+        setter.set_parameter(&self.params.jitter, p.jitter);
+        setter.end_set_parameter(&self.params.jitter);
+
+        setter.begin_set_parameter(&self.params.filter_poles);
+        setter.set_parameter(&self.params.filter_poles, p.poles);
+        setter.end_set_parameter(&self.params.filter_poles);
+
+        // Cutoff always 100% on preset change — user can sweep from there
+        setter.begin_set_parameter(&self.params.filter_cutoff);
+        setter.set_parameter(&self.params.filter_cutoff, 1.0);
+        setter.end_set_parameter(&self.params.filter_cutoff);
     }
 }
 
@@ -89,19 +157,18 @@ pub(crate) fn create(
     create_vizia_editor(
         editor_state,
         ViziaTheming::Custom,
-        move |cx, _| {
+        move |cx, gui_ctx| {
             EditorData {
                 params: params.clone(),
                 theme: Theme::NoniDark,
+                preset_idx: DEFAULT_PRESET,
+                gui_ctx: gui_ctx.clone(),
             }
             .build(cx);
 
             cx.add_stylesheet(include_str!("../assets/style.css"))
                 .expect("Failed to load stylesheet");
 
-            // Outer Binding on theme so the root element gets the right CSS class.
-            // The whole UI re-renders on theme change — fine for a plugin that
-            // rarely switches themes.
             Binding::new(cx, EditorData::theme, |cx, theme_lens| {
                 let theme = theme_lens.get(cx);
 
@@ -125,12 +192,30 @@ pub(crate) fn create(
                     })
                     .class("header");
 
+                    // ── Preset navigator ──────────────────────────────────────
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "◄")
+                            .class("preset-arrow")
+                            .on_press(|ex| ex.emit(EditorEvent::PrevPreset));
+
+                        Binding::new(cx, EditorData::preset_idx, |cx, idx_lens| {
+                            let idx = idx_lens.get(cx);
+                            Label::new(cx, PRESETS[idx].name).class("preset-name");
+                        });
+
+                        Label::new(cx, "►")
+                            .class("preset-arrow")
+                            .on_press(|ex| ex.emit(EditorEvent::NextPreset));
+                    })
+                    .class("preset-row");
+
                     // ── Controls ──────────────────────────────────────────────
                     HStack::new(cx, |cx| {
                         param_column(cx, "SAMPLE RATE", EditorData::params, |p| &p.target_sr);
-                        param_column(cx, "BIT DEPTH", EditorData::params, |p| &p.bit_depth);
-                        param_column(cx, "JITTER", EditorData::params, |p| &p.jitter);
-                        param_column(cx, "MIX", EditorData::params, |p| &p.mix);
+                        param_column(cx, "BIT DEPTH",   EditorData::params, |p| &p.bit_depth);
+                        param_column(cx, "JITTER",      EditorData::params, |p| &p.jitter);
+                        param_column(cx, "FILTER",      EditorData::params, |p| &p.filter_cutoff);
+                        param_column(cx, "MIX",         EditorData::params, |p| &p.mix);
                     })
                     .class("controls");
                 })
