@@ -1,0 +1,341 @@
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  sssssssssampler — plugin stylesheet                                      ║
+   ║  Themes: noni light / noni dark / paris / rooney                          ║
+   ║  Derived from coco-skream's oklch design tokens (converted to hex).       ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+/* ─── Reset / base ─────────────────────────────────────────────────────────── */
+
+* {
+    font-family: monospace;
+}
+
+/* ─── Structural shells ────────────────────────────────────────────────────── */
+
+.plugin-root {
+    width: 540px;
+    height: 230px;
+    layout-type: column;
+}
+
+.header {
+    layout-type: row;
+    child-top: stretch;
+    child-bottom: stretch;
+    child-left: 16px;
+    child-right: 16px;
+    padding-left: 16px;
+    padding-right: 16px;
+    height: 48px;
+    border-bottom-width: 1px;
+}
+
+.plugin-title {
+    font-size: 13px;
+    font-weight: 700;
+    child-left: 0px;
+    child-right: stretch;
+    top: stretch;
+    bottom: stretch;
+}
+
+.theme-switcher {
+    layout-type: row;
+    child-top: stretch;
+    child-bottom: stretch;
+    child-left: stretch;
+    col-between: 4px;
+    top: stretch;
+    bottom: stretch;
+}
+
+.theme-pill {
+    font-size: 10px;
+    font-weight: 500;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    border-radius: 999px;
+    border-width: 1px;
+    top: stretch;
+    bottom: stretch;
+}
+
+.theme-pill:hover {
+    opacity: 0.85;
+}
+
+.controls {
+    layout-type: row;
+    child-left: stretch;
+    child-right: stretch;
+    child-top: stretch;
+    child-bottom: stretch;
+    col-between: 12px;
+    padding-left: 16px;
+    padding-right: 16px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+    flex-grow: 1;
+}
+
+.param-col {
+    layout-type: column;
+    flex-grow: 1;
+    row-between: 6px;
+}
+
+.param-label {
+    font-size: 9px;
+    font-weight: 600;
+    height: 14px;
+}
+
+.param-slider {
+    flex-grow: 1;
+    border-radius: 3px;
+    border-width: 1px;
+}
+
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  NONI LIGHT — fresh lime green daylight                                   ║
+   ║  background: oklch(0.96 0.012 118) → #f1f3ea                             ║
+   ║  primary:    oklch(0.56 0.18 118)  → #6d8000                             ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+.theme-noni-light {
+    background-color: #f1f3ea;
+    color: #303617;
+}
+
+.theme-noni-light .header {
+    background-color: #e3e7d5;
+    border-bottom-color: #b3bd92;
+}
+
+.theme-noni-light .plugin-title {
+    color: #303617;
+}
+
+.theme-noni-light .theme-pill {
+    color: #535939;
+    border-color: #b3bd92;
+    background-color: transparent;
+}
+
+.theme-noni-light .theme-pill.active {
+    background-color: #6d8000;
+    color: #f1f3ea;
+    border-color: #6d8000;
+}
+
+.theme-noni-light .param-col {
+    background-color: #e3e7d5;
+    border-radius: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.theme-noni-light .param-label {
+    color: #535939;
+}
+
+.theme-noni-light .param-slider {
+    background-color: #b3bd92;
+    border-color: #b3bd92;
+}
+
+/* The filled portion of the param slider */
+.theme-noni-light .param-slider .fill {
+    background-color: #6d8000;
+}
+
+.theme-noni-light .param-slider .label {
+    color: #303617;
+    font-size: 10px;
+}
+
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  NONI DARK — deep forest, bright lime accent                              ║
+   ║  background: oklch(0.20 0.035 118) → #151805                             ║
+   ║  primary:    oklch(0.62 0.18 118)  → #7e9200                             ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+.theme-noni-dark {
+    background-color: #151805;
+    color: #dce1ce;
+}
+
+.theme-noni-dark .header {
+    background-color: #1d2204;
+    border-bottom-color: #3f4720;
+}
+
+.theme-noni-dark .plugin-title {
+    color: #9bb940;
+}
+
+.theme-noni-dark .theme-pill {
+    color: #838b68;
+    border-color: #3f4720;
+    background-color: transparent;
+}
+
+.theme-noni-dark .theme-pill.active {
+    background-color: #7e9200;
+    color: #151805;
+    border-color: #7e9200;
+}
+
+.theme-noni-dark .param-col {
+    background-color: #1d2204;
+    border-radius: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.theme-noni-dark .param-label {
+    color: #838b68;
+}
+
+.theme-noni-dark .param-slider {
+    background-color: #3f4720;
+    border-color: #3f4720;
+}
+
+.theme-noni-dark .param-slider .fill {
+    background-color: #7e9200;
+}
+
+.theme-noni-dark .param-slider .label {
+    color: #dce1ce;
+    font-size: 10px;
+}
+
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  PARIS — after midnight, hot pink, gold                                   ║
+   ║  background: oklch(0.16 0.03 330) → #140813                              ║
+   ║  primary:    oklch(0.78 0.28 328) → #ff5fff (but more like #e040e0 irl)  ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+.theme-paris {
+    background-color: #140813;
+    color: #f3ecf2;
+}
+
+.theme-paris .header {
+    background-color: #200f1f;
+    border-bottom-color: #443042;
+}
+
+.theme-paris .plugin-title {
+    color: #ff5fff;
+}
+
+.theme-paris .theme-pill {
+    color: #91808f;
+    border-color: #443042;
+    background-color: transparent;
+}
+
+.theme-paris .theme-pill.active {
+    background-color: #ff5fff;
+    color: #140813;
+    border-color: #ff5fff;
+}
+
+.theme-paris .param-col {
+    background-color: #200f1f;
+    border-radius: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.theme-paris .param-label {
+    color: #ffc474;
+}
+
+.theme-paris .param-slider {
+    background-color: #443042;
+    border-color: #443042;
+}
+
+.theme-paris .param-slider .fill {
+    background-color: #ff5fff;
+}
+
+.theme-paris .param-slider .label {
+    color: #f3ecf2;
+    font-size: 10px;
+}
+
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  ROONEY — Old Trafford under floodlights, Man Utd red and gold            ║
+   ║  background: oklch(0.12 0.05 22) → #140001                               ║
+   ║  primary:    oklch(0.58 0.30 22) → #fc000b                               ║
+   ║  accent:     oklch(0.82 0.20 78) → #ffaf00                               ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+.theme-rooney {
+    background-color: #140001;
+    color: #fcf3f2;
+}
+
+.theme-rooney .header {
+    background-color: #240002;
+    border-bottom-color: #4c1013;
+}
+
+.theme-rooney .plugin-title {
+    color: #fc000b;
+}
+
+.theme-rooney .theme-pill {
+    color: #9b6c6a;
+    border-color: #4c1013;
+    background-color: transparent;
+}
+
+.theme-rooney .theme-pill.active {
+    background-color: #fc000b;
+    color: #fcf3f2;
+    border-color: #fc000b;
+}
+
+.theme-rooney .param-col {
+    background-color: #240002;
+    border-radius: 4px;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}
+
+.theme-rooney .param-label {
+    color: #ffaf00;
+}
+
+.theme-rooney .param-slider {
+    background-color: #4c1013;
+    border-color: #4c1013;
+}
+
+.theme-rooney .param-slider .fill {
+    background-color: #fc000b;
+}
+
+.theme-rooney .param-slider .label {
+    color: #fcf3f2;
+    font-size: 10px;
+}

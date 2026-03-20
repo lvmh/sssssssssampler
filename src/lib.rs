@@ -1,5 +1,8 @@
 use nih_plug::prelude::*;
+use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
+
+mod editor;
 
 // ─── Machine presets ────────────────────────────────────────────────────────
 // Classic rates for reference (used in preset descriptions):
@@ -34,7 +37,11 @@ impl Default for Sssssssssampler {
 // ─── Parameters ──────────────────────────────────────────────────────────────
 
 #[derive(Params)]
-struct SssssssssamplerParams {
+pub struct SssssssssamplerParams {
+    /// Persists the editor window state (position, size).
+    #[persist = "editor-state"]
+    pub editor_state: Arc<ViziaState>,
+
     /// The effective playback sample rate.
     /// SP-1200 ≈ 26 kHz, S950 ≈ 39 kHz, S612 ≈ 31 kHz, SP-12 ≈ 27.5 kHz.
     #[id = "target_sr"]
@@ -56,6 +63,8 @@ struct SssssssssamplerParams {
 impl Default for SssssssssamplerParams {
     fn default() -> Self {
         Self {
+            editor_state: editor::default_state(),
+
             target_sr: FloatParam::new(
                 "Sample Rate",
                 26_040.0, // SP-1200 out of the box
@@ -157,6 +166,10 @@ impl Plugin for Sssssssssampler {
         self.params.clone()
     }
 
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.params.editor_state.clone())
+    }
+
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
@@ -245,6 +258,5 @@ impl Vst3Plugin for Sssssssssampler {
 }
 
 // ─── Exports ─────────────────────────────────────────────────────────────────
-// Export both CLAP (preferred) and VST3.
 nih_export_clap!(Sssssssssampler);
 nih_export_vst3!(Sssssssssampler);
