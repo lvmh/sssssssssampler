@@ -6,7 +6,6 @@ mod editor;
 mod render;
 mod parameter_remapping;
 mod audio_feed;
-mod anim_state;
 pub mod ascii_bank;
 pub use parameter_remapping::*;
 pub use audio_feed::AnimationParams;
