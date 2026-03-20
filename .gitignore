@@ -1,4 +1,5 @@
 target/
+target/bundled/
 Cargo.lock
 *.vst3
 *.clap
