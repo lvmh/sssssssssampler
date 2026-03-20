@@ -5,6 +5,7 @@ use std::sync::Arc;
 mod editor;
 mod render;
 mod parameter_remapping;
+pub mod ascii_bank;
 pub use parameter_remapping::*;
 
 // ─── Plugin struct ────────────────────────────────────────────────────────────
