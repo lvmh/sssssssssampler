@@ -70,7 +70,8 @@ pub struct SssssssssamplerParams {
     pub filter_cutoff: FloatParam,
 
     /// Filter pole count — 2.0 = 2-pole LP (SP-1200/SP-12 style),
-    /// 4.0 = 4th-order Butterworth (S950/S612/MPC3000/SP-303 style).
+    /// 4.0 = 4th-order Butterworth (S612/MPC3000/SP-303 style),
+    /// 6.0 = 6th-order Butterworth (S950 — 36 dB/oct switched-capacitor).
     #[id = "filter_poles"]
     pub filter_poles: FloatParam,
 
@@ -88,7 +89,7 @@ impl Default for SssssssssamplerParams {
 
             target_sr: FloatParam::new(
                 "Sample Rate",
-                39_375.0,
+                48_000.0,
                 FloatRange::Skewed {
                     min: 1_000.0,
                     max: 96_000.0,
@@ -141,8 +142,8 @@ impl Default for SssssssssamplerParams {
 
             filter_poles: FloatParam::new(
                 "Filter Poles",
-                4.0,
-                FloatRange::Linear { min: 2.0, max: 4.0 },
+                6.0,
+                FloatRange::Linear { min: 2.0, max: 6.0 },
             )
             .with_step_size(2.0)
             .with_value_to_string(formatters::v2s_f32_rounded(0))
@@ -211,23 +212,37 @@ impl BiquadState {
 // ─── Filter topology ──────────────────────────────────────────────────────────
 //
 // 2-pole (SP-1200/SP-12): single biquad, Q = 1/√2 ≈ 0.7071 (Butterworth 2nd order)
-// 4-pole (S950/S612/MPC3000/SP-303): two biquad cascade (4th-order Butterworth)
+// 4-pole (S612/MPC3000/SP-303): two biquad cascade (4th-order Butterworth)
 //   Stage 1 Q = 1/(2·sin π/8)  ≈ 1.3066
 //   Stage 2 Q = 1/(2·sin 3π/8) ≈ 0.5412
+// 6-pole (S950): three biquad cascade (6th-order Butterworth, 36 dB/oct)
+//   Stage 1 Q = 1/(2·sin π/12)  ≈ 1.9319
+//   Stage 2 Q = 1/(2·sin 3π/12) ≈ 1.0000 (= 1/2·sin(π/4))
+//   Stage 3 Q = 1/(2·sin 5π/12) ≈ 0.5176
 
 struct FilterState {
     stage1: BiquadState,
     stage2: BiquadState,
+    stage3: BiquadState,
 }
 
 impl FilterState {
     fn new() -> Self {
-        Self { stage1: BiquadState::new(), stage2: BiquadState::new() }
+        Self {
+            stage1: BiquadState::new(),
+            stage2: BiquadState::new(),
+            stage3: BiquadState::new(),
+        }
     }
 
     fn update(&mut self, step: f32, cutoff: f32, poles: i32) {
         let fc = (step * cutoff).min(0.99);
-        if poles >= 4 {
+        if poles >= 6 {
+            // 6th-order Butterworth: Q values for 3 biquad sections
+            self.stage1.update(fc, 1.9319);
+            self.stage2.update(fc, 1.0000);
+            self.stage3.update(fc, 0.5176);
+        } else if poles >= 4 {
             self.stage1.update(fc, 1.3066);
             self.stage2.update(fc, 0.5412);
         } else {
@@ -238,12 +253,20 @@ impl FilterState {
     #[inline]
     fn process(&mut self, x: f32, ch: usize, poles: i32) -> f32 {
         let y = self.stage1.process(x, ch);
-        if poles >= 4 { self.stage2.process(y, ch) } else { y }
+        if poles >= 6 {
+            let y2 = self.stage2.process(y, ch);
+            self.stage3.process(y2, ch)
+        } else if poles >= 4 {
+            self.stage2.process(y, ch)
+        } else {
+            y
+        }
     }
 
     fn reset(&mut self) {
         self.stage1.reset();
         self.stage2.reset();
+        self.stage3.reset();
     }
 }
 

@@ -35,6 +35,11 @@ pub struct AnimationParams {
     pub bpm: f32,
     /// Whether the DAW transport is currently playing
     pub playing: bool,
+    /// Visual energy: normalized 0–1, drives animation intensity
+    /// Computed as clamp(RMS * 1.5 + transient_boost, 0, 1)
+    pub energy: f32,
+    /// Whether a transient (spike) is currently active
+    pub transient: bool,
 }
 
 impl Default for AnimationParams {
@@ -49,6 +54,8 @@ impl Default for AnimationParams {
             rms: 0.0,
             bpm: 120.0,
             playing: false,
+            energy: 0.0,
+            transient: false,
         }
     }
 }
@@ -108,8 +115,13 @@ impl AudioFeed {
         let brightness = amplitude_to_brightness(rms);
         let motion_speed = amplitude_to_motion_speed(rms);
 
-        // Preserve existing BPM (set by update() from process context)
-        let existing = self.shared_params.lock().ok().map(|p| (p.bpm, p.playing)).unwrap_or((120.0, false));
+        // Preserve existing BPM/playing (set by update() from process context)
+        let existing = self.shared_params.lock().ok()
+            .map(|p| (p.bpm, p.playing))
+            .unwrap_or((120.0, false));
+        let transient = self.analyzer.transient_active();
+        let transient_boost = if transient { 0.3 } else { 0.0 };
+        let energy = (rms * 1.5 + transient_boost).clamp(0.0, 1.0);
         let anim_params = AnimationParams {
             instability,
             quantization,
@@ -120,6 +132,8 @@ impl AudioFeed {
             rms,
             bpm: existing.0,
             playing: existing.1,
+            energy,
+            transient,
         };
 
         // Update shared parameters
@@ -155,6 +169,11 @@ impl AudioFeed {
         // Effective BPM: above 115 treat as half-time
         let effective_bpm = if host_bpm > 115.0 { host_bpm * 0.5 } else { host_bpm };
 
+        // Visual energy: RMS-driven with transient boost
+        let transient = self.analyzer.transient_active();
+        let transient_boost = if transient { 0.3 } else { 0.0 };
+        let energy = (rms * 1.5 + transient_boost).clamp(0.0, 1.0);
+
         let anim_params = AnimationParams {
             instability,
             quantization,
@@ -165,6 +184,8 @@ impl AudioFeed {
             rms,
             bpm: effective_bpm,
             playing: host_playing,
+            energy,
+            transient,
         };
 
         // Update shared parameters

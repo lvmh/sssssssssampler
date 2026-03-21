@@ -1,0 +1,411 @@
+You are a senior Rust graphics and DSP engineer working on a highly refined ASCII animation system inside a NIH-plug plugin.
+
+Your task is to implement **V3: Moments, Memory, and Signature Behavior**, building directly on the existing system.
+
+This is NOT a rewrite.
+This is a **surgical upgrade** to an already complete V3 base.
+
+---
+
+# CONTEXT (CRITICAL — DO NOT BREAK)
+
+The system already has:
+
+* Fully working ASCII compositor (46×36 grid)
+* Deterministic pipeline (no rand, hash-based noise)
+* Strict character preservation rules
+* BPM-synced animation with capped update rate
+* Sample rate → temporal quantization + smearing
+* Filter → structural visibility via coherent noise
+* Velocity-based motion system
+* Tiered glitch system (bit depth driven)
+* Energy system (RMS + transient → smoothed energy states)
+* Multi-layer rendering (overlay → core → dust → glitch)
+
+Performance constraints:
+
+* zero per-frame allocations
+* ~60fps
+* CPU-based rendering
+
+DO NOT:
+
+* change architecture
+* introduce new rendering systems
+* break determinism
+* violate character preservation
+
+---
+
+# PRIMARY GOAL
+
+Upgrade the system from:
+
+“continuous reactive animation”
+
+to:
+
+“A performative visual instrument with recognizable moments, memory, and intentional contrast over time”
+
+---
+
+# CORE ADDITIONS
+
+---
+
+# PHASE 1 — MOMENT SYSTEM
+
+## Define:
+
+```rust
+enum Moment {
+    FreezeCut,
+    GlitchBloom,
+    LockIn,
+    PhaseWave,
+    Collapse,
+    Afterglow,
+    UserAccent,
+}
+```
+
+```rust
+struct MomentState {
+    active: Option<Moment>,
+    timer: u32,
+    duration: u32,
+    cooldown: u32,
+}
+```
+
+---
+
+## Rules
+
+* Only ONE moment active at a time
+* Moments must:
+
+  * have duration
+  * have cooldown (prevent spam)
+* Must be deterministic (hash-based triggering)
+* Must integrate into existing update loop
+
+---
+
+# PHASE 2 — MOMENT TRIGGERS
+
+Moments are triggered by:
+
+### Audio:
+
+* transient spikes
+* high energy (BUILD / PEAK)
+
+### Parameters:
+
+* rapid knob movement (sample rate, filter especially)
+
+### State transitions:
+
+* entering PEAK
+* exiting PEAK (for Afterglow)
+
+---
+
+## Example:
+
+```rust
+if transient_spike && energy > 0.8 && moment.cooldown == 0 {
+    try_trigger_moment();
+}
+```
+
+---
+
+# PHASE 3 — SIGNATURE MOMENT PACK
+
+Implement EXACTLY these behaviors.
+
+---
+
+## 1. FREEZE-CUT (HIGHEST PRIORITY)
+
+**Feeling:** time snaps
+
+### Behavior:
+
+* Freeze:
+
+  * core motion
+  * overlay motion
+  * velocity updates
+* DO NOT freeze dust
+* Apply slight brightness lift (~+10% perceived)
+
+### Duration:
+
+5–20 frames
+
+### Notes:
+
+* Must feel sharp and immediate
+* No easing on entry
+
+---
+
+## 2. GLITCH BLOOM
+
+**Feeling:** corruption expands outward
+
+### Behavior:
+
+* Select deterministic seed cell via hash
+* Expand glitch radius over time:
+
+  * frame 0: 1 cell
+  * frame N: up to 5×5 region
+* Use full CHARSET (allow block/box chars)
+
+### Decay:
+
+* Collapse back to original ASCII
+
+---
+
+## 3. LOCK-IN
+
+**Feeling:** alignment / visual clarity
+
+### Behavior:
+
+* One overlay temporarily uses SAME image as core
+* Reduce drift amplitude
+* Slightly increase opacity
+
+### Duration:
+
+< ½ bar
+
+---
+
+## 4. PHASE WAVE
+
+**Feeling:** smooth ripple through image
+
+### Behavior:
+
+```rust
+offset = sin(row * freq + time) * amplitude
+```
+
+* Apply horizontal displacement to:
+
+  * core
+  * optionally overlays (reduced amplitude)
+
+### Constraints:
+
+* Must preserve readability
+* Do not shift beyond bounds
+
+---
+
+## 5. COLLAPSE
+
+**Feeling:** structure breaking apart
+
+### Behavior:
+
+* Temporarily override filter downward
+* Remove clusters of core cells (use coherent noise)
+* Increase overlay dominance
+
+### Recovery:
+
+* Gradual rebuild using existing filter system
+
+---
+
+## 6. AFTERGLOW
+
+**Feeling:** visual echo / release
+
+### Trigger:
+
+* after Burst / Glitch / Peak exit
+
+### Behavior:
+
+* Increase temporal smearing
+* Extend trail persistence
+* Slightly reduce motion speed
+
+---
+
+## 7. USER ACCENT
+
+**Feeling:** user caused event
+
+### Trigger:
+
+* rapid parameter delta
+
+```rust
+delta = abs(param - prev_param)
+```
+
+### Behavior:
+
+* short boost:
+
+  * overlay density
+  * motion amplitude
+  * glitch probability (within caps)
+
+---
+
+# PHASE 4 — MEMORY SYSTEM
+
+---
+
+## Heat
+
+```rust
+heat = lerp(heat, smoothed_energy, 0.05)
+```
+
+Drives:
+
+* glitch scaling
+* overlay aggression
+
+---
+
+## Fatigue
+
+```rust
+fatigue += glitch_events * 0.01
+fatigue *= 0.98
+```
+
+Effect:
+
+* reduces glitch probability after heavy activity
+
+---
+
+## Afterimage Strength
+
+```rust
+afterimage = lerp(afterimage, smoothed_energy, 0.1)
+```
+
+Drives:
+
+* smearing strength
+* trail persistence
+
+---
+
+# PHASE 5 — RESTRAINT SYSTEM
+
+---
+
+## Idle Windows
+
+When:
+
+* energy is low
+* no active moment
+
+Then:
+
+* reduce overlay density
+* reduce motion amplitude
+* suppress glitch
+
+---
+
+## Recovery Windows
+
+After any moment:
+
+* temporarily reduce:
+
+  * glitch
+  * overlay density
+
+---
+
+# PHASE 6 — MICRO CONTRAST
+
+---
+
+## Micro-Freezes
+
+```rust
+if transient_spike && hash < threshold {
+    micro_freeze_frames = 5–10
+}
+```
+
+* lighter version of FreezeCut
+* creates rhythmic punctuation
+
+---
+
+# PHASE 7 — INTEGRATION PRIORITY
+
+Apply effects in this order:
+
+1. Active Moment (override layer)
+2. Memory (heat, fatigue, afterimage)
+3. Parameters (SR, filter, mix, bit depth)
+4. Base animation
+
+---
+
+# CRITICAL CONSTRAINTS
+
+* NEVER permanently modify ASCII characters
+* All effects must be reversible
+* Maintain readability
+* Respect existing compositing order
+* Do not introduce new buffers
+* No per-frame allocations
+
+---
+
+# COMPLETION CRITERIA
+
+System is complete when:
+
+* distinct visual “moments” clearly occur
+* system has contrast over time (not constant motion)
+* FreezeCut feels impactful and rhythmic
+* GlitchBloom is directional (not random noise)
+* Lock-In creates visible alignment moment
+* Afterglow creates soft visual release
+* user input creates visible accents
+* calm periods exist naturally
+
+---
+
+# PRIORITY
+
+1. Impactful moments (especially FreezeCut)
+2. Temporal contrast (peaks vs calm)
+3. Maintain clarity over chaos
+
+---
+
+# END GOAL
+
+A visual system that feels:
+
+* musical
+* intentional
+* expressive
+* recognizable within seconds
+
+A true visual instrument—not just animation.

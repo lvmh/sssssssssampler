@@ -74,6 +74,10 @@ impl UiRenderer {
             height,
             pixels,
             bg_rgb: [0, 0, 0],
+            primary_rgb: [200, 200, 200],
+            emphasis_rgb: [180, 180, 180],
+            preset_idx: 4,
+            theme_idx: 1,
         })
     }
 }

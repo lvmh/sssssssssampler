@@ -25,8 +25,9 @@ pub const CHARSET: &[char] = &[
     'O', 'M', '0', 'W', '^', '/', '|', '\\', '<', '>',
     '(', ')', '+', '=', '[', ']', '{', '}', '*', '%',
     '#', '&', '$', '@',
-    // ── Additional ASCII chars found in source images ──
+    // ── Additional ASCII chars found in source images + UI digits ──
     '"', 'm', '8',
+    '2', '3', '4', '5', '6', '7', '9',
     // ── Block elements by visual density ──
     // Light partial blocks (quadrants — sparse coverage)
     '▏', // 84  — 1/8 left block (~12% fill)
@@ -179,16 +180,61 @@ impl AsciiBank {
         AsciiBank { images, width: target_w, height: target_h }
     }
 
+    /// Parse a single text file with `#N` separators between images.
+    pub fn from_ascii_txt(txt: &str) -> Self {
+        let mut images = Vec::new();
+        let mut current_lines: Vec<&str> = Vec::new();
+        let mut in_image = false;
+
+        for line in txt.lines() {
+            let trimmed = line.trim();
+            // Detect separator: line starts with # followed by a digit, and is short
+            if trimmed.starts_with('#') && trimmed.len() < 6 {
+                let after_hash = &trimmed[1..];
+                if after_hash.chars().all(|c| c.is_ascii_digit()) && !after_hash.is_empty() {
+                    // Save previous image if any
+                    if in_image && !current_lines.is_empty() {
+                        let src = current_lines.join("\n");
+                        let grid = parse_ascii_image(&src, 0, 0);
+                        images.push(AnchorImage { grid });
+                    }
+                    current_lines.clear();
+                    in_image = true;
+                    continue;
+                }
+            }
+            if in_image {
+                current_lines.push(line);
+            }
+        }
+        // Last image
+        if in_image && !current_lines.is_empty() {
+            let src = current_lines.join("\n");
+            let grid = parse_ascii_image(&src, 0, 0);
+            images.push(AnchorImage { grid });
+        }
+
+        let width = images.iter().map(|i| i.grid.width).max().unwrap_or(46);
+        let height = images.iter().map(|i| i.grid.height).max().unwrap_or(36);
+        AsciiBank { images, width, height }
+    }
+
     pub fn len(&self) -> usize {
         self.images.len()
     }
 
     pub fn get_cell(&self, img_idx: usize, x: usize, y: usize) -> u8 {
-        self.images[img_idx].grid.get(x, y)
+        if img_idx < self.images.len() {
+            self.images[img_idx].grid.get(x, y)
+        } else {
+            0
+        }
     }
 }
 
-fn parse_ascii_image(src: &str, target_w: usize, target_h: usize) -> AsciiGrid {
+fn parse_ascii_image(src: &str, _target_w: usize, _target_h: usize) -> AsciiGrid {
+    // Store at native resolution — no resizing, no distortion.
+    // Characters render exactly as they appear in the source file.
     let lines: Vec<Vec<u8>> = src
         .lines()
         .map(|line| {
@@ -207,6 +253,5 @@ fn parse_ascii_image(src: &str, target_w: usize, target_h: usize) -> AsciiGrid {
             raw_cells[y * raw_w + x] = v;
         }
     }
-    let raw_grid = AsciiGrid { width: raw_w, height: raw_h, cells: raw_cells };
-    raw_grid.resized(target_w, target_h)
+    AsciiGrid { width: raw_w, height: raw_h, cells: raw_cells }
 }
