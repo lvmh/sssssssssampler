@@ -64,6 +64,7 @@ pub struct AsciiImageDisplay {
     grid_cell: RefCell<(f32, f32)>,
     menu_visible: RefCell<bool>,
     hover_row: RefCell<Option<usize>>,
+    frame_count: RefCell<u64>,
 }
 
 impl AsciiImageDisplay {
@@ -82,6 +83,7 @@ impl AsciiImageDisplay {
             grid_cell: RefCell::new((8.0, 12.0)),
             menu_visible: RefCell::new(false),
             hover_row: RefCell::new(None),
+            frame_count: RefCell::new(0),
         }
         .build(cx, |_cx| {})
         .size(Stretch(1.0))
@@ -173,14 +175,28 @@ impl AsciiImageDisplay {
         let expanded = self.ui_expanded.lock().map(|e| *e).unwrap_or(false);
         let font_size = (cell_h * 0.85).max(6.0);
 
+        let frame = *self.frame_count.borrow();
+        let energy_alpha = (0.85 + fb.energy * 0.10).min(1.0);
+
         let [pr, pg, pb] = fb.primary_rgb;
         let [er, eg, eb] = fb.emphasis_rgb;
 
-        // Helper: render text at grid position
-        let draw_text = |canvas: &mut Canvas, row: usize, col: usize, text: &str, r: u8, g: u8, b: u8, highlight: bool| {
+        // Apply energy brightness to UI colors
+        let scale = |v: u8, a: f32| -> u8 { (v as f32 * a).min(255.0) as u8 };
+
+        // Helper: render text at grid position with optional y offset
+        let draw_text_y = |canvas: &mut Canvas, row: usize, col: usize, text: &str, r: u8, g: u8, b: u8, highlight: bool, y_offset: f32| {
             let base_x = offset_x + col as f32 * cell_w;
-            let base_y = offset_y + row as f32 * cell_h;
-            let (cr, cg, cb) = if highlight { (r.saturating_add(40), g.saturating_add(40), b.saturating_add(40)) } else { (r, g, b) };
+            let base_y = offset_y + row as f32 * cell_h + y_offset;
+            let (cr, cg, cb) = if highlight {
+                if fb.is_light {
+                    (scale(r, energy_alpha).saturating_sub(40), scale(g, energy_alpha).saturating_sub(40), scale(b, energy_alpha).saturating_sub(40))
+                } else {
+                    (scale(r, energy_alpha).saturating_add(40), scale(g, energy_alpha).saturating_add(40), scale(b, energy_alpha).saturating_add(40))
+                }
+            } else {
+                (scale(r, energy_alpha), scale(g, energy_alpha), scale(b, energy_alpha))
+            };
             let mut paint = vg::Paint::color(vg::Color::rgb(cr, cg, cb));
             paint.set_font(&[fid]);
             paint.set_font_size(font_size);
@@ -188,9 +204,9 @@ impl AsciiImageDisplay {
             paint.set_text_baseline(vg::Baseline::Top);
             let _ = canvas.fill_text(base_x, base_y, text, &paint);
         };
-
-        // Title — always visible
-        draw_text(canvas, 1, UI_COL, "sssssssssampler", pr, pg, pb, false);
+        // Title — always visible, with sub-pixel vertical drift
+        let title_drift = (frame as f32 * 0.003).sin() * 0.5;
+        draw_text_y(canvas, 1, UI_COL, "sssssssssampler", pr, pg, pb, false, title_drift);
 
         // Menu — only when hovering in top-left quarter
         if !menu_vis { return; }
@@ -223,7 +239,7 @@ impl AsciiImageDisplay {
 
         for (grid_row, text) in &rows {
             let is_hover = hover == Some(*grid_row);
-            draw_text(canvas, *grid_row, UI_COL, text, er, eg, eb, is_hover);
+            draw_text_y(canvas, *grid_row, UI_COL, text, er, eg, eb, is_hover, 0.0);
         }
     }
 }
@@ -242,6 +258,7 @@ impl View for AsciiImageDisplay {
             *self.menu_visible.borrow_mut() = in_zone || dragging;
         }
 
+        *self.frame_count.borrow_mut() += 1;
         let font = self.ensure_font(canvas);
 
         if let Ok(fb_lock) = self.frame_buffer.lock() {

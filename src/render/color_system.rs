@@ -38,11 +38,19 @@ pub struct ColorPalette {
     pub background: Color,
     /// Kept for ABI compat
     pub emphasis: Color,
+    /// True when background is perceptually light (luminance > 0.18 linear)
+    pub is_light: bool,
 }
 
 impl ColorPalette {
+    /// Compute whether a background is perceptually light (linear luminance)
+    fn bg_is_light(bg: &Color) -> bool {
+        bg.r * 0.2126 + bg.g * 0.7152 + bg.b * 0.0722 > 0.18
+    }
+
     /// Noni Dark — hue 118 (yellow-green), exact coco-skream dark values
     pub fn noni_dark() -> Self {
+        let background = Color::from_srgb_hex(0x151805); // deep dark green
         ColorPalette {
             primary:    Color::from_srgb_hex(0x9BB940), // bright lime (accent)
             secondary: [
@@ -51,13 +59,15 @@ impl ColorPalette {
                 Color::from_srgb_hex(0x838B68),         // muted-fg
                 Color::from_srgb_hex(0x3F4720),         // border
             ],
-            background: Color::from_srgb_hex(0x151805), // deep dark green
+            is_light: Self::bg_is_light(&background),
+            background,
             emphasis:   Color::from_srgb_hex(0xDCE1CE),
         }
     }
 
     /// Noni Light — hue 118, exact coco-skream light values
     pub fn noni_light() -> Self {
+        let background = Color::from_srgb_hex(0xF1F3EA); // soft sage white
         ColorPalette {
             primary:    Color::from_srgb_hex(0x6D8000), // medium olive green
             secondary: [
@@ -66,13 +76,15 @@ impl ColorPalette {
                 Color::from_srgb_hex(0xB3BD92),         // border
                 Color::from_srgb_hex(0x303617),         // dark foreground
             ],
-            background: Color::from_srgb_hex(0xF1F3EA), // soft sage white
+            is_light: Self::bg_is_light(&background),
+            background,
             emphasis:   Color::from_srgb_hex(0x303617),
         }
     }
 
     /// Paris Dark — hue 328/330 (hot pink + gold), exact coco-skream values
     pub fn paris() -> Self {
+        let background = Color::from_srgb_hex(0x140813); // deep plum
         ColorPalette {
             primary:    Color::from_srgb_hex(0xFF5FFF), // hot magenta
             secondary: [
@@ -81,13 +93,15 @@ impl ColorPalette {
                 Color::from_srgb_hex(0x91808F),         // muted pink-grey
                 Color::from_srgb_hex(0x443042),         // deep border
             ],
-            background: Color::from_srgb_hex(0x140813), // deep plum
+            is_light: Self::bg_is_light(&background),
+            background,
             emphasis:   Color::from_srgb_hex(0xF3ECF2),
         }
     }
 
     /// Rooney Dark — hue 22 (Man Utd red + gold), exact coco-skream values
     pub fn rooney() -> Self {
+        let background = Color::from_srgb_hex(0x140001); // near-black red
         ColorPalette {
             primary:    Color::from_srgb_hex(0xFC000B), // Man Utd red
             secondary: [
@@ -96,13 +110,15 @@ impl ColorPalette {
                 Color::from_srgb_hex(0x9B6C6A),         // muted warm
                 Color::from_srgb_hex(0x4C1013),         // dark border
             ],
-            background: Color::from_srgb_hex(0x140001), // near-black red
+            is_light: Self::bg_is_light(&background),
+            background,
             emphasis:   Color::from_srgb_hex(0xFCF3F2),
         }
     }
 
     /// Brazil Light — hue 145 (forest teal) + gold, coco-skream brazil light
     pub fn brazil_light() -> Self {
+        let background = Color::from_srgb_hex(0xF4FAF4); // very light teal-white
         ColorPalette {
             primary:    Color::from_srgb_hex(0x007500), // forest teal-green
             secondary: [
@@ -111,7 +127,8 @@ impl ColorPalette {
                 Color::from_srgb_hex(0xD8E5FF),         // soft blue
                 Color::from_srgb_hex(0xC8DFC8),         // muted green border
             ],
-            background: Color::from_srgb_hex(0xF4FAF4), // very light teal-white
+            is_light: Self::bg_is_light(&background),
+            background,
             emphasis:   Color::from_srgb_hex(0x141A29),
         }
     }

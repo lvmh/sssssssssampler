@@ -159,6 +159,31 @@ impl AsciiGrid {
 #[derive(Clone)]
 pub struct AnchorImage {
     pub grid: AsciiGrid,
+    /// Fraction of non-space cells (0.0–1.0)
+    pub density: f32,
+    /// Edge transitions / total cells (0.0–1.0)
+    pub complexity: f32,
+}
+
+fn compute_density(grid: &AsciiGrid) -> f32 {
+    let total = grid.cells.len() as f32;
+    if total == 0.0 { return 0.0; }
+    let non_space = grid.cells.iter().filter(|&&c| c > 0).count() as f32;
+    non_space / total
+}
+
+fn compute_complexity(grid: &AsciiGrid) -> f32 {
+    let total = grid.cells.len();
+    if total == 0 { return 0.0; }
+    let mut edges = 0u32;
+    for y in 0..grid.height {
+        for x in 0..grid.width {
+            let c = grid.get(x, y);
+            if x + 1 < grid.width && grid.get(x + 1, y) != c { edges += 1; }
+            if y + 1 < grid.height && grid.get(x, y + 1) != c { edges += 1; }
+        }
+    }
+    (edges as f32 / total as f32).min(1.0)
 }
 
 #[derive(Clone)]
@@ -174,7 +199,9 @@ impl AsciiBank {
             .iter()
             .map(|src| {
                 let grid = parse_ascii_image(src, target_w, target_h);
-                AnchorImage { grid }
+                let density = compute_density(&grid);
+                let complexity = compute_complexity(&grid);
+                AnchorImage { grid, density, complexity }
             })
             .collect();
         AsciiBank { images, width: target_w, height: target_h }
@@ -196,7 +223,9 @@ impl AsciiBank {
                     if in_image && !current_lines.is_empty() {
                         let src = current_lines.join("\n");
                         let grid = parse_ascii_image(&src, 0, 0);
-                        images.push(AnchorImage { grid });
+                        let density = compute_density(&grid);
+                        let complexity = compute_complexity(&grid);
+                        images.push(AnchorImage { grid, density, complexity });
                     }
                     current_lines.clear();
                     in_image = true;
@@ -211,7 +240,9 @@ impl AsciiBank {
         if in_image && !current_lines.is_empty() {
             let src = current_lines.join("\n");
             let grid = parse_ascii_image(&src, 0, 0);
-            images.push(AnchorImage { grid });
+            let density = compute_density(&grid);
+            let complexity = compute_complexity(&grid);
+            images.push(AnchorImage { grid, density, complexity });
         }
 
         let width = images.iter().map(|i| i.grid.width).max().unwrap_or(46);

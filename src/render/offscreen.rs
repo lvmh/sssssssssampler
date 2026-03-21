@@ -20,6 +20,10 @@ pub struct FrameBuffer {
     pub preset_idx: u8,
     /// Current theme index (for UI display)
     pub theme_idx: u8,
+    /// Smoothed energy for UI brightness modulation
+    pub energy: f32,
+    /// True when current theme has a light background
+    pub is_light: bool,
 }
 
 impl FrameBuffer {
@@ -33,6 +37,8 @@ impl FrameBuffer {
             emphasis_rgb: [180, 180, 180],
             preset_idx: 4,
             theme_idx: 1,
+            energy: 0.0,
+            is_light: false,
         }
     }
 }

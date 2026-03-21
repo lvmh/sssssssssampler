@@ -78,6 +78,8 @@ impl UiRenderer {
             emphasis_rgb: [180, 180, 180],
             preset_idx: 4,
             theme_idx: 1,
+            energy: 0.0,
+            is_light: false,
         })
     }
 }

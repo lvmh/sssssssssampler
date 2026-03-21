@@ -142,6 +142,73 @@ impl Default for MemoryState {
     }
 }
 
+// ─── V4: Anchor points (grid coordinates) ────────────────────────────────────
+const ANCHOR_CENTER: (f32, f32) = (23.0, 18.0);
+const ANCHOR_UPPER: (f32, f32) = (23.0, 9.0);
+const ANCHOR_LOWER: (f32, f32) = (23.0, 27.0);
+const ANCHOR_LEFT: (f32, f32) = (11.0, 18.0);
+const ANCHOR_RIGHT: (f32, f32) = (35.0, 18.0);
+const ANCHOR_GOLDEN_TL: (f32, f32) = (17.0, 13.0);
+const ANCHOR_GOLDEN_BR: (f32, f32) = (29.0, 23.0);
+const ANCHOR_GOLDEN_TR: (f32, f32) = (29.0, 13.0);
+const ANCHOR_GOLDEN_BL: (f32, f32) = (17.0, 23.0);
+
+const ANCHORS: [(f32, f32); 9] = [
+    ANCHOR_CENTER, ANCHOR_UPPER, ANCHOR_LOWER, ANCHOR_LEFT, ANCHOR_RIGHT,
+    ANCHOR_GOLDEN_TL, ANCHOR_GOLDEN_BR, ANCHOR_GOLDEN_TR, ANCHOR_GOLDEN_BL,
+];
+
+// Slot roles: mass and drag
+const SLOT_MASS: [f32; 4] = [0.5, 0.3, 5.0, 2.0];  // Pulse, Accent, Drift, Ghost
+const SLOT_DRAG: [f32; 4] = [0.85, 0.80, 0.97, 0.95];
+const SLOT_PULL: [f32; 4] = [0.08, 0.15, 0.005, 0.02];
+const CORE_MASS: f32 = 3.0;
+const CORE_PULL: f32 = 0.03;
+
+/// V4: Coherent glitch field (FBM-style layered hash noise)
+fn glitch_field(col: u32, row: u32, phase: f32) -> f32 {
+    let hash_noise = |cx: f32, cy: f32, seed: u32| -> f32 {
+        let ix = cx as i32 as u32;
+        let iy = cy as i32 as u32;
+        let s = ix.wrapping_mul(2246822507)
+            .wrapping_add(iy.wrapping_mul(1664525))
+            .wrapping_add(seed);
+        ((s >> 16) & 0xFF) as f32 / 255.0
+    };
+    let coarse = hash_noise(col as f32 / 8.0 + phase, row as f32 / 8.0, 111);
+    let medium = hash_noise(col as f32 / 4.0 + phase * 1.3, row as f32 / 4.0, 222);
+    let fine = hash_noise(col as f32 / 2.0 + phase * 1.7, row as f32 / 2.0, 333);
+    (coarse * 0.5 + medium * 0.3 + fine * 0.2).clamp(0.0, 1.0)
+}
+
+/// V4: Select image biased toward a preferred density
+fn select_biased_image(bank: &crate::ascii_bank::AsciiBank, hash: u32, preferred_density: f32, count: usize) -> usize {
+    if count == 0 { return 0; }
+    let mut best_idx = (hash as usize) % count;
+    let mut best_dist = (bank.images[best_idx].density - preferred_density).abs();
+    for k in 1..3u32 {
+        let candidate = ((hash.wrapping_mul(k.wrapping_add(1).wrapping_mul(2654435761))) as usize) % count;
+        let dist = (bank.images[candidate].density - preferred_density).abs();
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = candidate;
+        }
+    }
+    best_idx
+}
+
+/// V4: Get anchors for a composition mode
+fn get_composition_anchors(mode: u8) -> [(f32, f32); 5] {
+    // Returns [core, pulse, accent, drift, ghost]
+    match mode {
+        0 => [ANCHOR_CENTER, ANCHOR_CENTER, ANCHOR_GOLDEN_TL, ANCHOR_UPPER, ANCHOR_CENTER],
+        1 => [ANCHOR_GOLDEN_TL, ANCHOR_GOLDEN_BR, ANCHOR_CENTER, ANCHOR_GOLDEN_TR, ANCHOR_GOLDEN_BL],
+        2 => [ANCHOR_LEFT, ANCHOR_RIGHT, ANCHOR_CENTER, ANCHOR_UPPER, ANCHOR_LOWER],
+        3 => [ANCHOR_CENTER, ANCHOR_CENTER, ANCHOR_CENTER, ANCHOR_CENTER, ANCHOR_CENTER], // orbit mode — offsets added dynamically
+        _ => [ANCHOR_CENTER; 5],
+    }
+}
+
 // ─── Model ────────────────────────────────────────────────────────────────────
 
 #[derive(Lens)]
@@ -200,6 +267,53 @@ pub struct EditorData {
     pub ui_expanded: bool,
     #[lens(ignore)]
     pub shared_ui_expanded: Arc<Mutex<bool>>,
+    // ── V4: Phrase system ──
+    #[lens(ignore)]
+    pub phrase_bar_counter: f32,
+    #[lens(ignore)]
+    pub phrase_phase: f32,
+    #[lens(ignore)]
+    pub phrase_length_bars: f32,
+    #[lens(ignore)]
+    pub bpm_stable_bars: f32,
+    #[lens(ignore)]
+    pub prev_bpm: f32,
+    // ── V4: Intent model ──
+    #[lens(ignore)]
+    pub intent_tension: f32,
+    #[lens(ignore)]
+    pub intent_release: f32,
+    #[lens(ignore)]
+    pub intent_chaos: f32,
+    #[lens(ignore)]
+    pub prev_energy_trend: f32,
+    #[lens(ignore)]
+    pub recent_moment_count: u32,
+    #[lens(ignore)]
+    pub recent_moment_decay_tick: u64,
+    // ── V4: Anchor/Composition ──
+    #[lens(ignore)]
+    pub composition_mode: u8,
+    #[lens(ignore)]
+    pub core_anchor: (f32, f32),
+    #[lens(ignore)]
+    pub core_pos: (f32, f32),
+    #[lens(ignore)]
+    pub overlay_anchors: [(f32, f32); 4],
+    #[lens(ignore)]
+    pub overlay_positions: [(f32, f32); 4],
+    #[lens(ignore)]
+    pub prev_core_anchor: (f32, f32),
+    // ── V4: Overlay physics ──
+    #[lens(ignore)]
+    pub overlay_velocity_rows: [f32; 4],
+    #[lens(ignore)]
+    pub overlay_velocity_cols: [f32; 4],
+    #[lens(ignore)]
+    pub accent_slot_alpha: f32,
+    // ── V4: Glitch field ──
+    #[lens(ignore)]
+    pub glitch_field_phase: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +409,7 @@ impl Model for EditorData {
                     let mix = mix_val.clamp(0.0, 1.0);
                     let overlay_visibility = mix * 0.80;
                     // Overlay density: mix controls how many cells show
-                    let overlay_density_threshold = 0.02 + mix * 0.98; // 2%→100%
+                    let overlay_density_threshold = 0.02 + mix * 0.98; // 2%→100% (phrase mod applied later)
                     // Overlay scroll rate scales with mix + energy
                     let overlay_speed_mult = 1.0 + mix * 0.5 + energy * 0.5;
 
@@ -340,6 +454,8 @@ impl Model for EditorData {
                     ];
                     frame_buffer.preset_idx = self.preset_idx as u8;
                     frame_buffer.theme_idx = THEMES.iter().position(|t| *t == self.theme).unwrap_or(0) as u8;
+                    frame_buffer.is_light = palette.is_light;
+                    let is_light = palette.is_light;
 
                     // ── Clocks ──
                     // dust_tick: always advances (dust never pauses)
@@ -369,31 +485,68 @@ impl Model for EditorData {
                     let ticks_per_beat = 60.0 * 60.0 / bpm;
                     let ticks_per_bar = ticks_per_beat * 4.0;
 
+                    // ── V4: Phrase system ──
+                    if playing {
+                        let bars_this_frame = 1.0 / ticks_per_bar.max(1.0);
+                        let bpm_delta = (bpm - self.prev_bpm).abs() / bpm.max(1.0);
+                        if bpm_delta < 0.02 {
+                            self.bpm_stable_bars += bars_this_frame;
+                        } else {
+                            self.bpm_stable_bars = 0.0;
+                        }
+                        self.prev_bpm = bpm;
+                        self.phrase_length_bars = if self.bpm_stable_bars > 4.0 { 16.0 } else { 8.0 };
+                        self.phrase_bar_counter += bars_this_frame;
+                        if self.phrase_bar_counter >= self.phrase_length_bars {
+                            self.phrase_bar_counter -= self.phrase_length_bars;
+                            // Phrase boundary — recompose
+                            let comp_hash = (self.anim_tick as u32).wrapping_mul(48271);
+                            self.composition_mode = (comp_hash % 4) as u8;
+                            let anchors = get_composition_anchors(self.composition_mode);
+                            self.prev_core_anchor = self.core_anchor;
+                            self.core_anchor = anchors[0];
+                            for i in 0..4 { self.overlay_anchors[i] = anchors[1 + i]; }
+                        }
+                    }
+                    self.phrase_phase = self.phrase_bar_counter / self.phrase_length_bars.max(1.0);
+                    let phrase_arc = if self.phrase_phase < 0.5 {
+                        self.phrase_phase * 2.0
+                    } else if self.phrase_phase < 0.75 {
+                        1.0
+                    } else {
+                        1.0 - (self.phrase_phase - 0.75) * 4.0
+                    };
+                    let phrase_overlay_mod = 0.7 + phrase_arc * 0.3;
+                    let phrase_brightness_mod = 0.9 + phrase_arc * 0.1;
+                    let phrase_moment_mod = 0.5 + phrase_arc * 0.5;
+
                     let img_count = self.ascii_bank.len();
 
                     // ── Core image cycling: every 2 bars, randomized order ──
                     let core_cycle_len = ticks_per_bar * 2.0;
                     let core_cycle = (t / core_cycle_len) as usize;
                     let core_hash = (core_cycle as u32).wrapping_mul(2654435761);
-                    let core_img = (core_hash as usize) % img_count;
+                    let preferred_density = if energy < 0.3 { 0.15 } else if energy > 0.7 { 0.6 } else { 0.35 };
+                    let core_img = select_biased_image(&self.ascii_bank, core_hash, preferred_density, img_count);
                     let prev_hash = (core_cycle.wrapping_sub(1) as u32).wrapping_mul(2654435761);
                     let prev_core_img = (prev_hash as usize) % img_count;
 
                     // Random position offset for small core images
                     let core_w = if core_img < img_count { self.ascii_bank.images[core_img].grid.width as i32 } else { COLS as i32 };
                     let core_h = if core_img < img_count { self.ascii_bank.images[core_img].grid.height as i32 } else { ROWS as i32 };
-                    // Allow core to drift partially off-screen (min 30% visible)
-                    let min_vis_c = (core_w * 3 / 10).max(1); // 30% of image width
-                    let min_vis_r = (core_h * 3 / 10).max(1); // 30% of image height
-                    let min_off_c = -(core_w - min_vis_c);     // most negative offset
-                    let max_off_c = COLS as i32 - min_vis_c;   // most positive offset
-                    let min_off_r = -(core_h - min_vis_r);
-                    let max_off_r = ROWS as i32 - min_vis_r;
-                    let core_range_c = (max_off_c - min_off_c + 1).max(1);
-                    let core_range_r = (max_off_r - min_off_r + 1).max(1);
-                    let core_pos_hash = (core_cycle as u32).wrapping_mul(2654435761);
-                    let core_col_off = min_off_c + ((core_pos_hash >> 4) as i32 % core_range_c).abs();
-                    let core_row_off = min_off_r + ((core_pos_hash >> 12) as i32 % core_range_r).abs();
+                    // V4: Anchor-based core positioning
+                    self.core_pos.0 += (self.core_anchor.0 - self.core_pos.0) * CORE_PULL;
+                    self.core_pos.1 += (self.core_anchor.1 - self.core_pos.1) * CORE_PULL;
+                    // Orbital offset
+                    let core_orbital_c = (t * 0.003).sin() * 3.0;
+                    let core_orbital_r = (t * 0.002).cos() * 2.0;
+                    // Safe framing: core >= 45% visible
+                    let min_vis_c = (core_w * 45 / 100).max(1);
+                    let min_vis_r = (core_h * 45 / 100).max(1);
+                    let core_col_off = ((self.core_pos.0 + core_orbital_c) as i32 - COLS as i32 / 2 + core_w / 2)
+                        .clamp(-(core_w - min_vis_c), COLS as i32 - min_vis_c);
+                    let core_row_off = ((self.core_pos.1 + core_orbital_r) as i32 - ROWS as i32 / 2 + core_h / 2)
+                        .clamp(-(core_h - min_vis_r), ROWS as i32 - min_vis_r);
 
                     // ── Transition with directional wave bias ──
                     let time_in_cycle = t % core_cycle_len;
@@ -409,11 +562,12 @@ impl Model for EditorData {
                     let bpm_force = (t / ticks_per_bar * std::f32::consts::TAU).sin() * 0.3;
                     let energy_force = if transient { energy * 2.0 } else { energy * 0.1 };
                     if should_update && !is_frozen {
-                        self.velocity_row += bpm_force + energy_force * motion_speed;
+                        let core_accel = (bpm_force + energy_force * motion_speed) / CORE_MASS;
+                        self.velocity_row += core_accel;
                         self.velocity_row *= 0.92;
                         self.velocity_row = self.velocity_row.clamp(-8.0, 8.0);
                         let col_force = (t / (ticks_per_bar * 2.0) * std::f32::consts::TAU).cos() * 0.15;
-                        self.velocity_col += col_force + energy_force * 0.2;
+                        self.velocity_col += (col_force + energy_force * 0.2) / CORE_MASS;
                         self.velocity_col *= 0.90;
                         self.velocity_col = self.velocity_col.clamp(-4.0, 4.0);
                     }
@@ -434,7 +588,7 @@ impl Model for EditorData {
 
                     // ── Overlay slots: 4, 6, 8 bar cycles ──
                     const NUM_SLOTS: usize = 4;
-                    const SLOT_BARS: [f32; NUM_SLOTS] = [1.5, 2.5, 3.0, 2.0];
+                    const SLOT_BARS: [f32; NUM_SLOTS] = [1.0, 1.5, 6.0, 3.0];
                     const HOLD_THRESHOLD: f32 = 0.15;
 
                     struct OverlaySlot {
@@ -450,6 +604,77 @@ impl Model for EditorData {
                         color_idx: usize,
                     }
 
+                    // V4: Update accent slot alpha
+                    if transient { self.accent_slot_alpha = energy.max(self.accent_slot_alpha); }
+                    self.accent_slot_alpha *= 0.85;
+                    let accent_alpha = self.accent_slot_alpha;
+                    let afterimage_val = self.memory.afterimage;
+
+                    // V4: Update overlay positions toward anchors with role-specific pull
+                    // Accent retargets on transient
+                    if transient {
+                        let accent_hash = (self.anim_tick as u32).wrapping_mul(1664525);
+                        self.overlay_anchors[1] = ANCHORS[(accent_hash as usize) % ANCHORS.len()];
+                    }
+                    // Ghost follows previous core anchor
+                    self.overlay_anchors[3] = self.prev_core_anchor;
+
+                    // Orbit mode: add sine/cosine offsets
+                    let orbit_offsets: [(f32, f32); 4] = if self.composition_mode == 3 {
+                        std::array::from_fn(|i| {
+                            let phase = i as f32 * std::f32::consts::FRAC_PI_2;
+                            let radius = 8.0 + i as f32 * 3.0;
+                            ((t * 0.004 + phase).sin() * radius,
+                             (t * 0.003 + phase).cos() * radius)
+                        })
+                    } else {
+                        [(0.0, 0.0); 4]
+                    };
+
+                    let mut overlay_col_offsets = [0i32; 4];
+                    let mut overlay_row_offsets = [0i32; 4];
+                    for i in 0..4 {
+                        // Pull toward anchor
+                        self.overlay_positions[i].0 += (self.overlay_anchors[i].0 - self.overlay_positions[i].0) * SLOT_PULL[i];
+                        self.overlay_positions[i].1 += (self.overlay_anchors[i].1 - self.overlay_positions[i].1) * SLOT_PULL[i];
+
+                        // Physics: apply velocity as orbital force
+                        if should_update {
+                            let force = (t * 0.005 + i as f32 * 1.7).sin() * 0.5;
+                            self.overlay_velocity_rows[i] += force / SLOT_MASS[i];
+                            self.overlay_velocity_rows[i] *= SLOT_DRAG[i];
+                            self.overlay_velocity_rows[i] = self.overlay_velocity_rows[i].clamp(-4.0, 4.0);
+                            let cforce = (t * 0.008 + i as f32 * 2.1).sin() * 0.5;
+                            self.overlay_velocity_cols[i] += cforce / SLOT_MASS[i];
+                            self.overlay_velocity_cols[i] *= SLOT_DRAG[i];
+                            self.overlay_velocity_cols[i] = self.overlay_velocity_cols[i].clamp(-4.0, 4.0);
+                        }
+
+                        let final_c = self.overlay_positions[i].0 + orbit_offsets[i].0 + self.overlay_velocity_cols[i];
+                        let final_r = self.overlay_positions[i].1 + orbit_offsets[i].1 + self.overlay_velocity_rows[i];
+                        // Safe framing: overlay >= 25% visible (use grid center offset)
+                        overlay_col_offsets[i] = (final_c as i32 - COLS as i32 / 2).clamp(-(COLS as i32 / 2), COLS as i32 / 2);
+                        overlay_row_offsets[i] = (final_r as i32 - ROWS as i32 / 2).clamp(-(ROWS as i32 / 2), ROWS as i32 / 2);
+                    }
+
+                    // V4: Soft collision avoidance between overlays
+                    for i in 0..4 {
+                        for j in (i+1)..4 {
+                            let dx = overlay_col_offsets[i] as f32 - overlay_col_offsets[j] as f32;
+                            let dy = overlay_row_offsets[i] as f32 - overlay_row_offsets[j] as f32;
+                            let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+                            if dist < 8.0 {
+                                let repulsion = (8.0 - dist) * 0.3;
+                                let nx = dx / dist;
+                                let ny = dy / dist;
+                                overlay_col_offsets[i] = (overlay_col_offsets[i] as f32 + nx * repulsion) as i32;
+                                overlay_row_offsets[i] = (overlay_row_offsets[i] as f32 + ny * repulsion) as i32;
+                                overlay_col_offsets[j] = (overlay_col_offsets[j] as f32 - nx * repulsion) as i32;
+                                overlay_row_offsets[j] = (overlay_row_offsets[j] as f32 - ny * repulsion) as i32;
+                            }
+                        }
+                    }
+
                     // V3: LockIn — check if moment is active (from previous frame)
                     let lockin_active = matches!(self.moment.active, Some(Moment::LockIn));
 
@@ -458,17 +683,31 @@ impl Model for EditorData {
                         let phase_offset = i as f32 * (slot_period / NUM_SLOTS as f32);
                         let sin_val = ((t + phase_offset) / slot_period * std::f32::consts::TAU).sin();
 
-                        // PHASE 5: Filter → layer priority
+                        // V4: Role-based alpha
                         let filter_boost = 1.0 - filter_val * 0.5;
-                        let mut raw_alpha = ((sin_val - HOLD_THRESHOLD) / (1.0 - HOLD_THRESHOLD))
-                            .clamp(0.0, 1.0) * overlay_visibility * filter_boost;
-
-                        // Ensure at least 1 overlay is ALWAYS visible:
-                        // Slots 0 and 3 have alpha floors so one is always showing
-                        let min_alpha = if i == 0 || i == 3 { 0.30 } else { 0.0 };
-                        if raw_alpha < min_alpha * overlay_visibility.max(0.3) {
-                            raw_alpha = min_alpha * overlay_visibility.max(0.3);
-                        }
+                        let raw_alpha = match i {
+                            0 => {
+                                // Pulse: beat-synced square wave
+                                let beat_phase = (t / ticks_per_beat) % 1.0;
+                                let pulse = if beat_phase < 0.5 { 0.8 } else { 0.3 };
+                                pulse * overlay_visibility * filter_boost * phrase_overlay_mod
+                            }
+                            1 => {
+                                // Accent: transient-reactive
+                                (accent_alpha * overlay_visibility * filter_boost).min(1.0)
+                            }
+                            2 => {
+                                // Drift: slow ambient sine
+                                let drift_alpha = (sin_val * 0.5 + 0.5) * 0.5;
+                                drift_alpha * overlay_visibility * filter_boost * phrase_overlay_mod
+                            }
+                            3 => {
+                                // Ghost: afterimage-driven
+                                let ghost_alpha = afterimage_val * 0.7;
+                                ghost_alpha.max(0.15) * overlay_visibility * filter_boost
+                            }
+                            _ => 0.0,
+                        };
 
                         let cycle = ((t + phase_offset) / slot_period) as usize;
                         let prev_cycle = if cycle > 0 { cycle - 1 } else { 0 };
@@ -500,10 +739,9 @@ impl Model for EditorData {
                         let row_shift = row_drift.max(0.0) as usize;
                         let col_shift = col_drift_ov as i32;
 
-                        // Random position for images — can be partially off-screen
-                        let pos_hash = hash.wrapping_mul(1103515245).wrapping_add(cycle as u32 * 12345);
-                        let img_col_offset = ((pos_hash >> 4) as i32 % (COLS as i32)).abs() - (COLS as i32 / 4);
-                        let img_row_offset = ((pos_hash >> 12) as i32 % (ROWS as i32)).abs() - (ROWS as i32 / 4);
+                        // V4: Anchor-based overlay positioning
+                        let img_col_offset = overlay_col_offsets[i];
+                        let img_row_offset = overlay_row_offsets[i];
 
                         OverlaySlot {
                             img_idx,
@@ -559,6 +797,26 @@ impl Model for EditorData {
                             }
                         }
                     }
+                    // V4: Intent model
+                    let energy_derivative = energy - self.prev_energy_trend;
+                    self.prev_energy_trend += (energy_derivative - self.prev_energy_trend) * 0.1;
+                    if self.anim_tick.wrapping_sub(self.recent_moment_decay_tick) > (ticks_per_bar * 4.0) as u64 {
+                        self.recent_moment_count = self.recent_moment_count.saturating_sub(1);
+                        self.recent_moment_decay_tick = self.anim_tick;
+                    }
+                    self.intent_tension += ((self.prev_energy_trend.max(0.0) * 2.0 + phrase_arc * 0.5) - self.intent_tension) * 0.05;
+                    self.intent_tension = self.intent_tension.clamp(0.0, 1.0);
+                    let release_signal = (-self.prev_energy_trend).max(0.0) * 2.0
+                        + if self.phrase_phase > 0.75 { (self.phrase_phase - 0.75) * 4.0 } else { 0.0 };
+                    self.intent_release += (release_signal - self.intent_release) * 0.05;
+                    self.intent_release = self.intent_release.clamp(0.0, 1.0);
+                    let chaos_signal = (filter_val - self.prev_filter).abs() * 5.0
+                        + ((target_sr - self.prev_sr) / 96000.0).abs() * 5.0
+                        + self.memory.fatigue * 0.5
+                        + self.recent_moment_count as f32 * 0.15;
+                    self.intent_chaos += (chaos_signal - self.intent_chaos) * 0.08;
+                    self.intent_chaos = self.intent_chaos.clamp(0.0, 1.0);
+
                     // Trigger new moments
                     if self.moment.active.is_none() && self.moment.cooldown == 0 {
                         let trigger_hash = (self.anim_tick as u32).wrapping_mul(2654435761);
@@ -578,40 +836,36 @@ impl Model for EditorData {
                             self.moment.timer = 0;
                             self.moment.duration = 10;
                             self.moment.seed = trigger_hash;
-                        } else if transient && energy > 0.8 && trigger_roll < 0.3 {
-                            // FreezeCut — most impactful
-                            self.moment.active = Some(Moment::FreezeCut);
-                            self.moment.timer = 0;
-                            self.moment.duration = 5 + ((trigger_hash >> 16) % 16) as u32;
-                            self.moment.seed = trigger_hash;
-                        } else if transient && energy > 0.6 && trigger_roll < 0.15 {
-                            // GlitchBloom
-                            self.moment.active = Some(Moment::GlitchBloom);
-                            self.moment.timer = 0;
-                            self.moment.duration = 15 + ((trigger_hash >> 12) % 10) as u32;
-                            self.moment.seed = trigger_hash;
-                            self.moment.bloom_center = (
-                                ((trigger_hash >> 4) as usize % COLS as usize),
-                                ((trigger_hash >> 14) as usize % ROWS as usize),
-                            );
-                        } else if entering_peak && trigger_roll < 0.4 {
-                            // LockIn on PEAK entry
-                            self.moment.active = Some(Moment::LockIn);
-                            self.moment.timer = 0;
-                            self.moment.duration = (ticks_per_beat * 2.0) as u32;
-                            self.moment.seed = trigger_hash;
-                        } else if energy > 0.7 && trigger_roll < 0.05 {
-                            // PhaseWave
-                            self.moment.active = Some(Moment::PhaseWave);
-                            self.moment.timer = 0;
-                            self.moment.duration = 20 + ((trigger_hash >> 8) % 15) as u32;
-                            self.moment.seed = trigger_hash;
-                        } else if exiting_peak {
-                            // Collapse on PEAK exit
-                            self.moment.active = Some(Moment::Collapse);
-                            self.moment.timer = 0;
-                            self.moment.duration = 25;
-                            self.moment.seed = trigger_hash;
+                        } else {
+                            // V4: Intent-driven moment selection
+                            let base_prob = (0.02 + energy * 0.08) * phrase_moment_mod;
+                            if trigger_roll < base_prob {
+                                let intent_mag = self.intent_tension.max(self.intent_release).max(self.intent_chaos);
+                                let dominant = if self.intent_tension > self.intent_release && self.intent_tension > self.intent_chaos {
+                                    if (trigger_hash >> 20) & 1 == 0 { Moment::FreezeCut } else { Moment::LockIn }
+                                } else if self.intent_release > self.intent_chaos {
+                                    if (trigger_hash >> 20) & 1 == 0 { Moment::Afterglow } else { Moment::Collapse }
+                                } else {
+                                    if (trigger_hash >> 20) & 1 == 0 { Moment::GlitchBloom } else { Moment::PhaseWave }
+                                };
+                                let base_dur = match dominant {
+                                    Moment::FreezeCut => 5, Moment::LockIn => (ticks_per_beat * 2.0) as u32,
+                                    Moment::GlitchBloom => 15, Moment::PhaseWave => 20,
+                                    Moment::Collapse => 25, Moment::Afterglow => 20, _ => 10,
+                                };
+                                let dur = base_dur + ((trigger_hash >> 12) % 10) as u32 + (intent_mag * 10.0) as u32;
+                                self.moment.active = Some(dominant);
+                                self.moment.timer = 0;
+                                self.moment.duration = dur;
+                                self.moment.seed = trigger_hash;
+                                if matches!(dominant, Moment::GlitchBloom) {
+                                    self.moment.bloom_center = (
+                                        ((trigger_hash >> 4) as usize % COLS as usize),
+                                        ((trigger_hash >> 14) as usize % ROWS as usize),
+                                    );
+                                }
+                                self.recent_moment_count += 1;
+                            }
                         }
                     }
                     self.prev_energy_state = visual_state;
@@ -669,7 +923,7 @@ impl Model for EditorData {
                             let src_row_signed = bank_row as i32 + row_scroll as i32 - core_row_off;
                             let src_row = if src_row_signed >= 0 { src_row_signed as usize } else { 9999 };
 
-                            let base_raw = if in_base_margin || src_row >= ROWS as usize {
+                            let base_raw = if in_base_margin || src_row >= core_h as usize {
                                 0.0
                             } else if in_transition {
                                 // V2: wave-biased scatter-dissolve
@@ -711,7 +965,7 @@ impl Model for EditorData {
                                 ) * 0.25;
                                 let coherent_noise = center * 0.6 + neighbor_avg * 0.4;
                                 // Below filter threshold → dimmed; above → full
-                                if coherent_noise > filter_val { 0.15 } else { 1.0 }
+                                if coherent_noise > filter_val { if is_light { 0.35 } else { 0.15 } } else { 1.0 }
                             } else {
                                 1.0
                             };
@@ -753,7 +1007,7 @@ impl Model for EditorData {
                                     let ov_hash = col.wrapping_mul(7919).wrapping_add(row.wrapping_mul(104729))
                                         .wrapping_add(slot.img_idx as u32 * 31337);
                                     let ov_chance = ((ov_hash >> 16) & 0xFF) as f32 / 255.0;
-                                    if ov_chance > overlay_density_threshold { continue; }
+                                    if ov_chance > overlay_density_threshold * phrase_overlay_mod { continue; }
 
                                     if slot.alpha > best_alpha {
                                         best_alpha = slot.alpha;
@@ -807,7 +1061,7 @@ impl Model for EditorData {
                                 let na = (sh_ov(col.wrapping_add(1), row) + sh_ov(col.wrapping_sub(1), row)
                                     + sh_ov(col, row.wrapping_add(1)) + sh_ov(col, row.wrapping_sub(1))) * 0.25;
                                 let coh = cn * 0.6 + na * 0.4;
-                                if coh > filter_val { 0.15 } else { 1.0 }
+                                if coh > filter_val { if is_light { 0.35 } else { 0.15 } } else { 1.0 }
                             } else { 1.0 };
 
                             if has_overlay && !dust_over_overlay {
@@ -850,7 +1104,8 @@ impl Model for EditorData {
                                 // V2: energy-coupled dust density
                                 if dust_present < dust_density || dust_over_overlay {
                                     let c = palette.secondary[3];
-                                    let op = 0.06 + dust_opacity.powf(0.35) * 0.44;
+                                    let op_base = 0.06 + dust_opacity.powf(0.35) * 0.44;
+                                    let op = if is_light { (op_base * 1.6).min(0.85) } else { op_base };
                                     r = bg.r + (c.r - bg.r) * op;
                                     g = bg.g + (c.g - bg.g) * op;
                                     b = bg.b + (c.b - bg.b) * op;
@@ -873,7 +1128,7 @@ impl Model for EditorData {
                                         .wrapping_add(self.moment.seed);
                                     let gi = 87 + ((bloom_seed >> 4) as usize % (CHARSET_LEN - 87));
                                     final_density_idx = gi.min(CHARSET_LEN - 1);
-                                    let gc = palette.emphasis;
+                                    let gc = palette.primary;
                                     let bloom_alpha = 0.3 + energy * 0.3;
                                     r = r + (gc.r - r) * bloom_alpha;
                                     g = g + (gc.g - g) * bloom_alpha;
@@ -893,14 +1148,13 @@ impl Model for EditorData {
                                 }
                             }
 
-                            // ── V2: Tiered glitch corruption ──
+                            // ── V4: Coherent glitch field ──
                             if corruption_tier > 0 && final_density_idx > 0 {
-                                // Mix anim_tick so glitch pattern changes with BPM-gated clock
                                 let glitch_seed = noise_seed.wrapping_mul(2246822507)
                                     .wrapping_add(self.anim_tick as u32 * 1664525);
-                                let glitch_roll = ((glitch_seed >> 12) & 0xFFFF) as f32 / 65535.0;
+                                let gf = glitch_field(col, row, self.glitch_field_phase);
 
-                                if glitch_roll < glitch_prob {
+                                if gf < glitch_prob * 8.0 {
                                     match corruption_tier {
                                         1 => {
                                             // Point: single char from full CHARSET
@@ -919,7 +1173,7 @@ impl Model for EditorData {
                                         }
                                     }
                                     let gc = palette.emphasis;
-                                    let gm = 0.15 + energy * 0.2;
+                                    let gm = if is_light { 0.30 + energy * 0.35 } else { 0.15 + energy * 0.2 };
                                     r = r + (gc.r - r) * gm;
                                     g = g + (gc.g - g) * gm;
                                     b = b + (gc.b - b) * gm;
@@ -932,12 +1186,19 @@ impl Model for EditorData {
                                 final_density_idx = 1 + pick;
                             }
 
-                            // V3: Moment brightness boost + UserAccent
-                            if moment_brightness_boost > 0.0 || accent_boost > 0.0 {
+                            // V3+V4: Brightness boost (moment + phrase)
+                            // On light themes: emphasis = darken (subtract), on dark: brighten (add)
+                            {
                                 let boost = moment_brightness_boost + accent_boost;
-                                r = (r + boost).min(1.0);
-                                g = (g + boost).min(1.0);
-                                b = (b + boost).min(1.0);
+                                if is_light {
+                                    r = (r * phrase_brightness_mod - boost).max(0.0);
+                                    g = (g * phrase_brightness_mod - boost).max(0.0);
+                                    b = (b * phrase_brightness_mod - boost).max(0.0);
+                                } else {
+                                    r = (r * phrase_brightness_mod + boost).min(1.0);
+                                    g = (g * phrase_brightness_mod + boost).min(1.0);
+                                    b = (b * phrase_brightness_mod + boost).min(1.0);
+                                }
                             }
                             // V3: Idle/recovery dampening
                             if idle_dampen < 1.0 || recovery_dampen < 1.0 {
@@ -957,6 +1218,9 @@ impl Model for EditorData {
                             frame_buffer.pixels[idx + 3] = final_density_idx as u8;
                         }
                     }
+
+                    self.glitch_field_phase += 0.01;
+                    frame_buffer.energy = energy;
 
                     // V3: Update fatigue from glitch events
                     self.memory.fatigue += self.glitch_events_this_frame as f32 * 0.01;
@@ -1084,6 +1348,28 @@ pub(crate) fn create(
                 prev_sr: 0.0,
                 glitch_events_this_frame: 0,
                 ui_expanded: false,
+                // V4
+                phrase_bar_counter: 0.0,
+                phrase_phase: 0.0,
+                phrase_length_bars: 8.0,
+                bpm_stable_bars: 0.0,
+                prev_bpm: 120.0,
+                intent_tension: 0.0,
+                intent_release: 0.0,
+                intent_chaos: 0.0,
+                prev_energy_trend: 0.0,
+                recent_moment_count: 0,
+                recent_moment_decay_tick: 0,
+                composition_mode: 0,
+                core_anchor: (23.0, 18.0),
+                core_pos: (23.0, 18.0),
+                overlay_anchors: [(23.0, 18.0); 4],
+                overlay_positions: [(23.0, 18.0); 4],
+                prev_core_anchor: (23.0, 18.0),
+                overlay_velocity_rows: [0.0; 4],
+                overlay_velocity_cols: [0.0; 4],
+                accent_slot_alpha: 0.0,
+                glitch_field_phase: 0.0,
                 shared_ui_expanded: Arc::new(Mutex::new(false)),
             }
             .build(cx);
