@@ -91,6 +91,7 @@ pub struct EditorData {
     pub params: Arc<SssssssssamplerParams>,
     pub theme: Theme,
     pub preset_idx: usize,
+    pub frame_update_counter: usize,
     #[lens(ignore)]
     pub gui_ctx: Arc<dyn GuiContext>,
     #[lens(ignore)]
@@ -108,6 +109,9 @@ pub enum EditorEvent {
 
 impl Model for EditorData {
     fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        // Increment counter for periodic updates
+        self.frame_update_counter = self.frame_update_counter.wrapping_add(1);
+
         event.map(|e: &EditorEvent, _| match e {
             EditorEvent::SetTheme(t) => self.theme = *t,
             EditorEvent::PrevPreset => {
@@ -123,23 +127,32 @@ impl Model for EditorData {
                 }
             }
             EditorEvent::UpdateFrameBuffer => {
-                // Generate a test frame buffer to display
+                // Generate animated frame buffer with RMS-driven visuals
                 if let Ok(anim_params) = self.anim_params.lock() {
                     let mut frame_buffer = crate::render::FrameBuffer::new(36, 46);
                     let brightness = 0.3 + (anim_params.rms * 0.7);
 
+                    // Add time-based wave animation for visual interest
+                    let time_phase = ((anim_params.instability * 100.0) as u32) % 360;
+                    let wave = ((time_phase as f32 * std::f32::consts::PI / 180.0).sin() * 0.3 + 0.3).max(0.1);
+
                     for row in 0..46u32 {
                         for col in 0..36u32 {
                             let idx = ((row * 36 + col) * 4) as usize;
-                            let checkerboard = (col + row) % 2 == 0;
+
+                            // Pattern: checkerboard + wave modulation
+                            let checkerboard = ((col + row + (time_phase / 30)) % 2) == 0;
+                            let layer_mod = ((col / 6 + row / 8) % 2) as f32;
+
+                            let intensity = brightness * (0.7 + wave * layer_mod);
 
                             let (r, g, b) = if checkerboard {
-                                // Soft Violet
-                                let v = (brightness * 122.0) as u8;
-                                (v, (brightness * 108.0) as u8, 255)
+                                // Soft Violet with wave
+                                let v = (intensity * 122.0).min(255.0) as u8;
+                                (v, (intensity * 108.0).min(255.0) as u8, 255)
                             } else {
-                                // Muted Green
-                                ((brightness * 76.0) as u8, (brightness * 175.0) as u8, (brightness * 130.0) as u8)
+                                // Muted Green with wave
+                                ((intensity * 76.0).min(255.0) as u8, (intensity * 175.0).min(255.0) as u8, (intensity * 130.0).min(255.0) as u8)
                             };
 
                             frame_buffer.pixels[idx] = r;
@@ -183,6 +196,35 @@ impl EditorData {
     }
 
     fn apply_preset(&self) {
+        // Trigger frame buffer update when preset changes
+        if let Ok(anim_params) = self.anim_params.lock() {
+            let mut frame_buffer = crate::render::FrameBuffer::new(36, 46);
+            let brightness = 0.3 + (anim_params.rms * 0.7);
+
+            for row in 0..46u32 {
+                for col in 0..36u32 {
+                    let idx = ((row * 36 + col) * 4) as usize;
+                    let checkerboard = (col + row) % 2 == 0;
+
+                    let (r, g, b) = if checkerboard {
+                        let v = (brightness * 122.0) as u8;
+                        (v, (brightness * 108.0) as u8, 255)
+                    } else {
+                        ((brightness * 76.0) as u8, (brightness * 175.0) as u8, (brightness * 130.0) as u8)
+                    };
+
+                    frame_buffer.pixels[idx] = r;
+                    frame_buffer.pixels[idx + 1] = g;
+                    frame_buffer.pixels[idx + 2] = b;
+                    frame_buffer.pixels[idx + 3] = 255;
+                }
+            }
+
+            if let Ok(mut fb) = self.frame_buffer.lock() {
+                *fb = Some(frame_buffer);
+            }
+        }
+
         let p = &PRESETS[self.preset_idx];
         let setter = ParamSetter::new(&*self.gui_ctx);
 
@@ -247,6 +289,7 @@ pub(crate) fn create(
                 params: params.clone(),
                 theme: Theme::NoniDark,
                 preset_idx: DEFAULT_PRESET,
+                frame_update_counter: 0,
                 gui_ctx: gui_ctx.clone(),
                 anim_params: anim_params.clone(),
                 frame_buffer,
@@ -283,6 +326,7 @@ pub(crate) fn create(
                     {
                         let editor_data = cx.data::<EditorData>().unwrap();
                         let frame_buffer = editor_data.frame_buffer.clone();
+
                         AsciiImageDisplay::new(cx, frame_buffer);
                     }
 
@@ -310,6 +354,14 @@ pub(crate) fn create(
                         param_column(cx, "JITTER",      EditorData::params, |p| &p.jitter);
                         param_column(cx, "FILTER",      EditorData::params, |p| &p.filter_cutoff);
                         param_column(cx, "MIX",         EditorData::params, |p| &p.mix);
+
+                        // Anti-aliasing toggle
+                        VStack::new(cx, |cx| {
+                            Label::new(cx, "ANTI-ALIAS").class("param-label");
+                            ParamButton::new(cx, EditorData::params, |p| &p.anti_alias)
+                                .class("param-button");
+                        })
+                        .class("param-col");
                     })
                     .class("controls");
                 })

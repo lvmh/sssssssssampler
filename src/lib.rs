@@ -73,6 +73,12 @@ pub struct SssssssssamplerParams {
     /// 4.0 = 4th-order Butterworth (S950/S612/MPC3000/SP-303 style).
     #[id = "filter_poles"]
     pub filter_poles: FloatParam,
+
+    /// Enable anti-aliasing reconstruction filter
+    /// When ON: applies aggressive LP filtering at Nyquist to prevent aliasing
+    /// When OFF: allows raw aliasing (lo-fi aesthetic)
+    #[id = "anti_alias"]
+    pub anti_alias: BoolParam,
 }
 
 impl Default for SssssssssamplerParams {
@@ -141,6 +147,8 @@ impl Default for SssssssssamplerParams {
             .with_step_size(2.0)
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_unit("-pole"),
+
+            anti_alias: BoolParam::new("Anti-Aliasing", true),
         }
     }
 }
@@ -354,10 +362,20 @@ impl Plugin for Sssssssssampler {
                 let mut wet = crush(self.held[ch], bit_depth_smooth);
 
                 // ── Reconstruction filter ──────────────────────────────────
-                // Bypass filter at 100% (1.0) cutoff for no effect on audio
+                let anti_alias_enabled = self.params.anti_alias.value();
+
+                // Apply filter normally if user is controlling it (cutoff < 100%)
                 if filter_cutoff < 1.0 {
                     wet = self.filter.process(wet, ch, poles);
+                } else if anti_alias_enabled {
+                    // At 100% cutoff with anti-aliasing ON, apply gentle filtering at Nyquist
+                    // to prevent aliasing (use ~0.95 effective cutoff)
+                    let gentle_cutoff = 0.95;
+                    let gentle_step = (target_sr_smooth / host_sr).min(1.0);
+                    self.filter.update(gentle_step, gentle_cutoff, poles);
+                    wet = self.filter.process(wet, ch, poles);
                 }
+                // If anti_alias is OFF and cutoff is 100%, no filter applied (raw aliasing)
 
                 // ── Dry/wet ────────────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;
