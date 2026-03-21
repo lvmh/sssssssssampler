@@ -10,6 +10,7 @@ use crate::SssssssssamplerParams;
 use crate::AnimationParams;
 use crate::editor_view::AsciiRenderView;
 use crate::ascii_grid_view::AsciiGridDisplay;
+use crate::ascii_image_display::AsciiImageDisplay;
 use std::sync::Mutex;
 
 pub(crate) const WINDOW_WIDTH: u32 = 540;
@@ -102,6 +103,7 @@ pub enum EditorEvent {
     SetTheme(Theme),
     PrevPreset,
     NextPreset,
+    UpdateFrameBuffer,
 }
 
 impl Model for EditorData {
@@ -118,6 +120,38 @@ impl Model for EditorData {
                 if self.preset_idx + 1 < PRESETS.len() {
                     self.preset_idx += 1;
                     self.apply_preset();
+                }
+            }
+            EditorEvent::UpdateFrameBuffer => {
+                // Generate a test frame buffer to display
+                if let Ok(anim_params) = self.anim_params.lock() {
+                    let mut frame_buffer = crate::render::FrameBuffer::new(36, 46);
+                    let brightness = 0.3 + (anim_params.rms * 0.7);
+
+                    for row in 0..46u32 {
+                        for col in 0..36u32 {
+                            let idx = ((row * 36 + col) * 4) as usize;
+                            let checkerboard = (col + row) % 2 == 0;
+
+                            let (r, g, b) = if checkerboard {
+                                // Soft Violet
+                                let v = (brightness * 122.0) as u8;
+                                (v, (brightness * 108.0) as u8, 255)
+                            } else {
+                                // Muted Green
+                                ((brightness * 76.0) as u8, (brightness * 175.0) as u8, (brightness * 130.0) as u8)
+                            };
+
+                            frame_buffer.pixels[idx] = r;
+                            frame_buffer.pixels[idx + 1] = g;
+                            frame_buffer.pixels[idx + 2] = b;
+                            frame_buffer.pixels[idx + 3] = 255;
+                        }
+                    }
+
+                    if let Ok(mut fb) = self.frame_buffer.lock() {
+                        *fb = Some(frame_buffer);
+                    }
                 }
             }
         });
@@ -190,7 +224,24 @@ pub(crate) fn create(
         editor_state,
         ViziaTheming::Custom,
         move |cx, gui_ctx| {
-            let frame_buffer = Arc::new(Mutex::new(None));
+            // Create initial frame buffer with test pattern
+            let mut initial_frame = crate::render::FrameBuffer::new(36, 46);
+            for row in 0..46u32 {
+                for col in 0..36u32 {
+                    let idx = ((row * 36 + col) * 4) as usize;
+                    let checkerboard = (col + row) % 2 == 0;
+                    let (r, g, b) = if checkerboard {
+                        (80, 50, 255)  // Soft Violet
+                    } else {
+                        (50, 100, 80)  // Muted Green
+                    };
+                    initial_frame.pixels[idx] = r;
+                    initial_frame.pixels[idx + 1] = g;
+                    initial_frame.pixels[idx + 2] = b;
+                    initial_frame.pixels[idx + 3] = 255;
+                }
+            }
+            let frame_buffer = Arc::new(Mutex::new(Some(initial_frame)));
 
             EditorData {
                 params: params.clone(),
@@ -228,47 +279,11 @@ pub(crate) fn create(
                     })
                     .class("header");
 
-                    // ── Rendering view ────────────────────────────────────────
+                    // ── Live ASCII art rendering ──────────────────────────────
                     {
                         let editor_data = cx.data::<EditorData>().unwrap();
-                        let anim_params = editor_data.anim_params.clone();
-
-                        // Generate 36×46 checkerboard grid - initially neutral  brightness
-                        VStack::new(cx, |cx| {
-                            for row in 0..46 {
-                                HStack::new(cx, |cx| {
-                                    for col in 0..36 {
-                                        let checkerboard = (col + row) % 2 == 0;
-
-                                        let (r, g, b) = if checkerboard {
-                                            // Soft Violet: (122, 108, 255) @ 0.3 brightness
-                                            (
-                                                (0.3 * 122.0 / 255.0 * 255.0) as u8,
-                                                (0.3 * 108.0 / 255.0 * 255.0) as u8,
-                                                255,
-                                            )
-                                        } else {
-                                            // Muted Green: (76, 175, 130) @ 0.3 brightness
-                                            (
-                                                (0.3 * 76.0 / 255.0 * 255.0) as u8,
-                                                (0.3 * 175.0 / 255.0 * 255.0) as u8,
-                                                (0.3 * 130.0 / 255.0 * 255.0) as u8,
-                                            )
-                                        };
-
-                                        Element::new(cx)
-                                            .size(Stretch(1.0))
-                                            .background_color(Color::rgb(r, g, b));
-                                    }
-                                })
-                                .height(Pixels(5.87))
-                                .row_between(Pixels(0.0))
-                                .child_space(Pixels(0.0));
-                            }
-                        })
-                        .size(Stretch(1.0))
-                        .col_between(Pixels(0.0))
-                        .child_space(Pixels(0.0));
+                        let frame_buffer = editor_data.frame_buffer.clone();
+                        AsciiImageDisplay::new(cx, frame_buffer);
                     }
 
                     // ── Preset navigator ──────────────────────────────────────

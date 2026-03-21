@@ -5,6 +5,7 @@ use std::sync::Arc;
 mod editor;
 mod editor_view;
 mod ascii_grid_view;
+mod ascii_image_display;
 mod render;
 mod parameter_remapping;
 mod audio_feed;
@@ -353,7 +354,10 @@ impl Plugin for Sssssssssampler {
                 let mut wet = crush(self.held[ch], bit_depth_smooth);
 
                 // ── Reconstruction filter ──────────────────────────────────
-                wet = self.filter.process(wet, ch, poles);
+                // Bypass filter at 100% (1.0) cutoff for no effect on audio
+                if filter_cutoff < 1.0 {
+                    wet = self.filter.process(wet, ch, poles);
+                }
 
                 // ── Dry/wet ────────────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;
