@@ -1,43 +1,40 @@
-/* ╔═══════════════════════════════════════════════════════════════════════════╗
-   ║  sssssssssampler — plugin stylesheet                                      ║
-   ║  Themes: noni light / noni dark / paris / rooney                          ║
-   ║  Derived from coco-skream's oklch design tokens (converted to hex).       ║
-   ╚═══════════════════════════════════════════════════════════════════════════╝ */
-
-/* ─── Reset / base ─────────────────────────────────────────────────────────── */
+/* sssssssssampler — plugin stylesheet
+   Themes: noni light / noni dark / paris / rooney */
 
 * {
     font-family: monospace;
 }
 
-/* ─── Structural shells ────────────────────────────────────────────────────── */
+/* ─── Root ─────────────────────────────────────────────────────────────────── */
 
 .plugin-root {
     width: 540px;
-    height: 270px;
+    height: 600px;
     layout-type: column;
 }
 
+/* ─── Header ────────────────────────────────────────────────────────────────── */
+
 .header {
     layout-type: row;
-    child-top: stretch;
-    child-bottom: stretch;
-    child-left: 16px;
-    child-right: 16px;
+    height: 44px;
     padding-left: 16px;
     padding-right: 16px;
-    height: 48px;
+    child-top: stretch;
+    child-bottom: stretch;
     border-bottom-width: 1px;
 }
 
 .plugin-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     child-left: 0px;
     child-right: stretch;
     top: stretch;
     bottom: stretch;
 }
+
+/* ─── Theme switcher ────────────────────────────────────────────────────────── */
 
 .theme-switcher {
     layout-type: row;
@@ -50,12 +47,12 @@
 }
 
 .theme-pill {
-    font-size: 10px;
-    font-weight: 500;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 4px;
-    padding-bottom: 4px;
+    font-size: 9px;
+    font-weight: 600;
+    padding-left: 9px;
+    padding-right: 9px;
+    padding-top: 3px;
+    padding-bottom: 3px;
     border-radius: 999px;
     border-width: 1px;
     top: stretch;
@@ -63,21 +60,23 @@
 }
 
 .theme-pill:hover {
-    opacity: 0.85;
+    opacity: 0.8;
 }
+
+/* ─── Preset row ────────────────────────────────────────────────────────────── */
 
 .preset-row {
     layout-type: row;
+    height: 32px;
     child-top: stretch;
     child-bottom: stretch;
     child-left: stretch;
     child-right: stretch;
-    height: 36px;
     border-bottom-width: 1px;
 }
 
 .preset-arrow {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     padding-left: 16px;
     padding-right: 16px;
@@ -88,17 +87,20 @@
 }
 
 .preset-arrow:hover {
-    opacity: 0.65;
+    opacity: 0.6;
 }
 
 .preset-name {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
     child-left: stretch;
     child-right: stretch;
     top: stretch;
     bottom: stretch;
 }
+
+/* ─── Controls ──────────────────────────────────────────────────────────────── */
 
 .controls {
     layout-type: row;
@@ -106,49 +108,53 @@
     child-right: stretch;
     child-top: stretch;
     child-bottom: stretch;
-    col-between: 12px;
-    padding-left: 16px;
-    padding-right: 16px;
-    padding-top: 14px;
-    padding-bottom: 14px;
-    flex-grow: 1;
+    col-between: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    height: 88px;
 }
 
 .param-col {
     layout-type: column;
     flex-grow: 1;
-    row-between: 6px;
+    row-between: 5px;
+    padding-left: 4px;
+    padding-right: 4px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-radius: 3px;
 }
 
 .param-label {
-    font-size: 9px;
-    font-weight: 600;
-    height: 14px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    height: 12px;
 }
 
 .param-slider {
     flex-grow: 1;
-    border-radius: 3px;
-    border-width: 1px;
+    border-radius: 2px;
+    border-width: 0px;
 }
 
-/* ─── ASCII Grid Display ─────────────────────────────────────────────── */
+.param-slider .label {
+    font-size: 9px;
+    font-weight: 600;
+}
 
-ascii-grid-display {
+.param-button {
     flex-grow: 1;
-    border-radius: 0;
-    background-color: #1e1e2f;
-    margin-left: 0;
-    margin-right: 0;
-    margin-top: 0;
-    margin-bottom: 0;
+    border-radius: 2px;
+    border-width: 1px;
+    font-size: 9px;
 }
 
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
-   ║  NONI LIGHT — fresh lime green daylight                                   ║
-   ║  background: oklch(0.96 0.012 118) → #f1f3ea                             ║
-   ║  primary:    oklch(0.56 0.18 118)  → #6d8000                             ║
+   ║  NONI LIGHT — sage green daylight                                         ║
    ╚═══════════════════════════════════════════════════════════════════════════╝ */
 
 .theme-noni-light {
@@ -161,9 +167,7 @@ ascii-grid-display {
     border-bottom-color: #b3bd92;
 }
 
-.theme-noni-light .plugin-title {
-    color: #303617;
-}
+.theme-noni-light .plugin-title { color: #303617; }
 
 .theme-noni-light .theme-pill {
     color: #535939;
@@ -177,52 +181,32 @@ ascii-grid-display {
     border-color: #6d8000;
 }
 
-.theme-noni-light .param-col {
-    background-color: #e3e7d5;
-    border-radius: 4px;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
-
-.theme-noni-light .param-label {
-    color: #535939;
-}
-
-.theme-noni-light .param-slider {
-    background-color: #b3bd92;
-    border-color: #b3bd92;
-}
-
-/* The filled portion of the param slider */
-.theme-noni-light .param-slider .fill {
-    background-color: #6d8000;
-}
-
-.theme-noni-light .param-slider .label {
-    color: #303617;
-    font-size: 10px;
-}
-
 .theme-noni-light .preset-row {
     background-color: #e3e7d5;
     border-bottom-color: #b3bd92;
 }
 
-.theme-noni-light .preset-arrow {
-    color: #535939;
-}
+.theme-noni-light .preset-arrow { color: #535939; }
+.theme-noni-light .preset-name  { color: #6d8000; }
 
-.theme-noni-light .preset-name {
-    color: #6d8000;
+.theme-noni-light .controls { background-color: #e8ecda; }
+
+.theme-noni-light .param-col { background-color: #d8ddc8; }
+.theme-noni-light .param-label { color: #535939; }
+
+.theme-noni-light .param-slider { background-color: #c0c9a0; }
+.theme-noni-light .param-slider .fill { background-color: #6d8000; }
+.theme-noni-light .param-slider .label { color: #303617; }
+
+.theme-noni-light .param-button {
+    background-color: #d8ddc8;
+    border-color: #b3bd92;
+    color: #535939;
 }
 
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
-   ║  NONI DARK — deep forest, bright lime accent                              ║
-   ║  background: oklch(0.20 0.035 118) → #151805                             ║
-   ║  primary:    oklch(0.62 0.18 118)  → #7e9200                             ║
+   ║  NONI DARK — deep forest green                                            ║
    ╚═══════════════════════════════════════════════════════════════════════════╝ */
 
 .theme-noni-dark {
@@ -235,9 +219,7 @@ ascii-grid-display {
     border-bottom-color: #3f4720;
 }
 
-.theme-noni-dark .plugin-title {
-    color: #9bb940;
-}
+.theme-noni-dark .plugin-title { color: #9bb940; }
 
 .theme-noni-dark .theme-pill {
     color: #838b68;
@@ -251,51 +233,32 @@ ascii-grid-display {
     border-color: #7e9200;
 }
 
-.theme-noni-dark .param-col {
-    background-color: #1d2204;
-    border-radius: 4px;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
-
-.theme-noni-dark .param-label {
-    color: #838b68;
-}
-
-.theme-noni-dark .param-slider {
-    background-color: #3f4720;
-    border-color: #3f4720;
-}
-
-.theme-noni-dark .param-slider .fill {
-    background-color: #7e9200;
-}
-
-.theme-noni-dark .param-slider .label {
-    color: #dce1ce;
-    font-size: 10px;
-}
-
 .theme-noni-dark .preset-row {
     background-color: #1d2204;
     border-bottom-color: #3f4720;
 }
 
-.theme-noni-dark .preset-arrow {
-    color: #838b68;
-}
+.theme-noni-dark .preset-arrow { color: #838b68; }
+.theme-noni-dark .preset-name  { color: #9bb940; }
 
-.theme-noni-dark .preset-name {
-    color: #9bb940;
+.theme-noni-dark .controls { background-color: #1a1f04; }
+
+.theme-noni-dark .param-col { background-color: #222800; }
+.theme-noni-dark .param-label { color: #7e8a55; }
+
+.theme-noni-dark .param-slider { background-color: #3a4218; }
+.theme-noni-dark .param-slider .fill { background-color: #7e9200; }
+.theme-noni-dark .param-slider .label { color: #dce1ce; }
+
+.theme-noni-dark .param-button {
+    background-color: #222800;
+    border-color: #3f4720;
+    color: #838b68;
 }
 
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
-   ║  PARIS — after midnight, hot pink, gold                                   ║
-   ║  background: oklch(0.16 0.03 330) → #140813                              ║
-   ║  primary:    oklch(0.78 0.28 328) → #ff5fff (but more like #e040e0 irl)  ║
+   ║  PARIS — midnight pink & gold                                             ║
    ╚═══════════════════════════════════════════════════════════════════════════╝ */
 
 .theme-paris {
@@ -308,9 +271,7 @@ ascii-grid-display {
     border-bottom-color: #443042;
 }
 
-.theme-paris .plugin-title {
-    color: #ff5fff;
-}
+.theme-paris .plugin-title { color: #ff5fff; }
 
 .theme-paris .theme-pill {
     color: #91808f;
@@ -324,52 +285,32 @@ ascii-grid-display {
     border-color: #ff5fff;
 }
 
-.theme-paris .param-col {
-    background-color: #200f1f;
-    border-radius: 4px;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
-
-.theme-paris .param-label {
-    color: #ffc474;
-}
-
-.theme-paris .param-slider {
-    background-color: #443042;
-    border-color: #443042;
-}
-
-.theme-paris .param-slider .fill {
-    background-color: #ff5fff;
-}
-
-.theme-paris .param-slider .label {
-    color: #f3ecf2;
-    font-size: 10px;
-}
-
 .theme-paris .preset-row {
     background-color: #200f1f;
     border-bottom-color: #443042;
 }
 
-.theme-paris .preset-arrow {
-    color: #91808f;
-}
+.theme-paris .preset-arrow { color: #91808f; }
+.theme-paris .preset-name  { color: #ff5fff; }
 
-.theme-paris .preset-name {
-    color: #ff5fff;
+.theme-paris .controls { background-color: #1a0d1a; }
+
+.theme-paris .param-col { background-color: #240f22; }
+.theme-paris .param-label { color: #ffc474; }
+
+.theme-paris .param-slider { background-color: #3c2240; }
+.theme-paris .param-slider .fill { background-color: #ff5fff; }
+.theme-paris .param-slider .label { color: #f3ecf2; }
+
+.theme-paris .param-button {
+    background-color: #240f22;
+    border-color: #443042;
+    color: #91808f;
 }
 
 
 /* ╔═══════════════════════════════════════════════════════════════════════════╗
-   ║  ROONEY — Old Trafford under floodlights, Man Utd red and gold            ║
-   ║  background: oklch(0.12 0.05 22) → #140001                               ║
-   ║  primary:    oklch(0.58 0.30 22) → #fc000b                               ║
-   ║  accent:     oklch(0.82 0.20 78) → #ffaf00                               ║
+   ║  ROONEY — Man Utd red & gold                                              ║
    ╚═══════════════════════════════════════════════════════════════════════════╝ */
 
 .theme-rooney {
@@ -382,9 +323,7 @@ ascii-grid-display {
     border-bottom-color: #4c1013;
 }
 
-.theme-rooney .plugin-title {
-    color: #fc000b;
-}
+.theme-rooney .plugin-title { color: #fc000b; }
 
 .theme-rooney .theme-pill {
     color: #9b6c6a;
@@ -398,42 +337,77 @@ ascii-grid-display {
     border-color: #fc000b;
 }
 
-.theme-rooney .param-col {
-    background-color: #240002;
-    border-radius: 4px;
-    padding-left: 10px;
-    padding-right: 10px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
-
-.theme-rooney .param-label {
-    color: #ffaf00;
-}
-
-.theme-rooney .param-slider {
-    background-color: #4c1013;
-    border-color: #4c1013;
-}
-
-.theme-rooney .param-slider .fill {
-    background-color: #fc000b;
-}
-
-.theme-rooney .param-slider .label {
-    color: #fcf3f2;
-    font-size: 10px;
-}
-
 .theme-rooney .preset-row {
     background-color: #240002;
     border-bottom-color: #4c1013;
 }
 
-.theme-rooney .preset-arrow {
+.theme-rooney .preset-arrow { color: #9b6c6a; }
+.theme-rooney .preset-name  { color: #fc000b; }
+
+.theme-rooney .controls { background-color: #1c0001; }
+
+.theme-rooney .param-col { background-color: #280002; }
+.theme-rooney .param-label { color: #ffaf00; }
+
+.theme-rooney .param-slider { background-color: #3c0808; }
+.theme-rooney .param-slider .fill { background-color: #fc000b; }
+.theme-rooney .param-slider .label { color: #fcf3f2; }
+
+.theme-rooney .param-button {
+    background-color: #280002;
+    border-color: #4c1013;
     color: #9b6c6a;
 }
 
-.theme-rooney .preset-name {
-    color: #fc000b;
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  BRAZIL LIGHT — coco-skream brazil, hue 145 (forest teal) + gold         ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝ */
+
+.theme-brazil-light {
+    background-color: #f4faf4;
+    color: #141a29;
+}
+
+.theme-brazil-light .header {
+    background-color: #e4f2e4;
+    border-bottom-color: #c8dfc8;
+}
+
+.theme-brazil-light .plugin-title { color: #007500; }
+
+.theme-brazil-light .theme-pill {
+    color: #3a5a3a;
+    border-color: #c8dfc8;
+    background-color: transparent;
+}
+
+.theme-brazil-light .theme-pill.active {
+    background-color: #007500;
+    color: #f4faf4;
+    border-color: #007500;
+}
+
+.theme-brazil-light .preset-row {
+    background-color: #e4f2e4;
+    border-bottom-color: #c8dfc8;
+}
+
+.theme-brazil-light .preset-arrow { color: #3a5a3a; }
+.theme-brazil-light .preset-name  { color: #007500; }
+
+.theme-brazil-light .controls { background-color: #eaf6ea; }
+
+.theme-brazil-light .param-col { background-color: #d8eed8; }
+.theme-brazil-light .param-label { color: #c8a000; }
+
+.theme-brazil-light .param-slider { background-color: #c0dcc0; }
+.theme-brazil-light .param-slider .fill { background-color: #007500; }
+.theme-brazil-light .param-slider .label { color: #141a29; }
+
+.theme-brazil-light .param-button {
+    background-color: #d8eed8;
+    border-color: #c8dfc8;
+    color: #3a5a3a;
 }

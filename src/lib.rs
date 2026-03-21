@@ -386,8 +386,13 @@ impl Plugin for Sssssssssampler {
             }
         }
 
-        // Update animation parameters with current DSP values
-        self.audio_feed.update(target_sr, bit_depth, jitter);
+        // Get BPM and play state from host transport
+        let transport = _context.transport();
+        let host_bpm = transport.tempo.unwrap_or(120.0) as f32;
+        let host_playing = transport.playing;
+
+        // Update animation parameters with current DSP values + BPM + play state
+        self.audio_feed.update(target_sr, bit_depth, jitter, host_bpm, host_playing);
 
         ProcessStatus::Normal
     }

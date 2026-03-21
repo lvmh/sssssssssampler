@@ -3,11 +3,19 @@
 // Preprocesses all 19 ASCII images at compile time into a normalised grid of
 // density indices.  The charset is ordered from blank (0) to dense (max).
 //
-// Density mapping is done by a simple lookup: characters not in the charset
-// are mapped to the closest density match based on a lookup table.
+// Uses a hybrid charset: original ASCII for artwork fidelity, then block
+// elements and box drawing chars (all confirmed present in FiraCode Nerd Font)
+// for fine density gradation beyond standard ASCII.
+//
+// IMPORTANT: All original ASCII characters in artwork (letters, punctuation)
+// map to themselves via exact-match in char_to_idx — they are NEVER replaced.
 
 /// Ordered charset: index 0 = lightest, index N-1 = densest.
+/// Structure:
+///   [0..83]   = original ASCII chars (artwork-safe, exact match preserved)
+///   [84..N]   = block elements + box drawing for fine density (all in FiraCode)
 pub const CHARSET: &[char] = &[
+    // ── Original ASCII (indices 0–83) — artwork chars preserved exactly ──
     ' ', '.', '\'', '`', ',', ':', ';', '-', '~', '_',
     '!', 'i', 'l', '1', 'I', 'r', 'c', 'v', 'u', 'n',
     'x', 'z', 'j', 'f', 't', 'L', 'C', 'J', 'Y', 'F',
@@ -17,32 +25,85 @@ pub const CHARSET: &[char] = &[
     'O', 'M', '0', 'W', '^', '/', '|', '\\', '<', '>',
     '(', ')', '+', '=', '[', ']', '{', '}', '*', '%',
     '#', '&', '$', '@',
+    // ── Additional ASCII chars found in source images ──
+    '"', 'm', '8',
+    // ── Block elements by visual density ──
+    // Light partial blocks (quadrants — sparse coverage)
+    '▏', // 84  — 1/8 left block (~12% fill)
+    '▎', // 85  — 1/4 left block (~25% fill)
+    '▖', // 86  — lower-left quadrant (~25%)
+    '▗', // 87  — lower-right quadrant (~25%)
+    '▘', // 88  — upper-left quadrant (~25%)
+    '▝', // 89  — upper-right quadrant (~25%)
+    '▍', // 90  — 3/8 left block (~37%)
+    '▚', // 91  — diagonal quadrants (~50%)
+    '▞', // 92  — anti-diagonal quadrants (~50%)
+    '▌', // 93  — left half (~50%)
+    '▐', // 94  — right half (~50%)
+    '▄', // 95  — lower half (~50%)
+    '▀', // 96  — upper half (~50%)
+    '░', // 97  — light shade (~25% stipple)
+    '▒', // 98  — medium shade (~50% stipple)
+    '▓', // 99  — dark shade (~75% stipple)
+    '▙', // 100 — 3-quadrant (~75%)
+    '▛', // 101 — 3-quadrant (~75%)
+    '▜', // 102 — 3-quadrant (~75%)
+    '▟', // 103 — 3-quadrant (~75%)
+    '▇', // 104 — 7/8 block (~87%)
+    '█', // 105 — full block (100%)
+    // ── Box drawing — light to heavy (indices 106+) ──
+    '─', // 106 — light horizontal
+    '│', // 107 — light vertical
+    '┌', // 108 — light corner
+    '┐', // 109
+    '└', // 110
+    '┘', // 111
+    '├', // 112
+    '┤', // 113
+    '┬', // 114
+    '┴', // 115
+    '┼', // 116 — light cross
+    '═', // 117 — double horizontal
+    '║', // 118 — double vertical
+    '╔', // 119
+    '╗', // 120
+    '╚', // 121
+    '╝', // 122
+    '╬', // 123 — double cross (densest box drawing)
 ];
 
-pub const CHARSET_LEN: usize = CHARSET.len(); // 84
+pub const CHARSET_LEN: usize = CHARSET.len(); // 124
 
 /// Map any char to its nearest index in CHARSET.
 /// Called at parse time only.
+/// IMPORTANT: Exact ASCII matches always win — artwork characters are preserved.
 pub fn char_to_idx(c: char) -> u8 {
-    // Fast path: exact match
+    // Fast path: exact match (preserves all original artwork characters)
     for (i, &ch) in CHARSET.iter().enumerate() {
         if ch == c {
             return i as u8;
         }
     }
-    // Fallback density heuristic: use visual weight groups
-    let density = visual_density(c);
-    let mut best = 0usize;
-    let mut best_dist = f32::MAX;
-    for (i, _) in CHARSET.iter().enumerate() {
-        let cd = visual_density(CHARSET[i]);
-        let d = (density - cd).abs();
-        if d < best_dist {
-            best_dist = d;
-            best = i;
-        }
+    // Not in CHARSET — treat as empty space. Don't try to approximate.
+    // Source images are plain ASCII; anything unknown is just whitespace.
+    0
+}
+
+/// Density for a charset index — block elements have known fill percentages.
+fn charset_density(idx: usize) -> f32 {
+    if idx >= CHARSET_LEN { return 0.5; }
+    let ch = CHARSET[idx];
+    match ch {
+        '▏' => 0.12, '▎' => 0.25, '▖' | '▗' | '▘' | '▝' => 0.25,
+        '▍' => 0.37, '▚' | '▞' => 0.50, '▌' | '▐' | '▄' | '▀' => 0.50,
+        '░' => 0.25, '▒' => 0.50, '▓' => 0.75,
+        '▙' | '▛' | '▜' | '▟' => 0.75, '▇' => 0.87, '█' => 1.0,
+        '─' => 0.15, '│' => 0.15, '┌' | '┐' | '└' | '┘' => 0.20,
+        '├' | '┤' | '┬' | '┴' => 0.25, '┼' => 0.30,
+        '═' => 0.25, '║' => 0.25, '╔' | '╗' | '╚' | '╝' => 0.35,
+        '╬' => 0.45,
+        _ => visual_density(ch),
     }
-    best as u8
 }
 
 fn visual_density(c: char) -> f32 {
@@ -94,10 +155,12 @@ impl AsciiGrid {
     }
 }
 
+#[derive(Clone)]
 pub struct AnchorImage {
     pub grid: AsciiGrid,
 }
 
+#[derive(Clone)]
 pub struct AsciiBank {
     pub images: Vec<AnchorImage>,
     pub width: usize,
@@ -126,7 +189,6 @@ impl AsciiBank {
 }
 
 fn parse_ascii_image(src: &str, target_w: usize, target_h: usize) -> AsciiGrid {
-    // Split into lines, keeping internal spaces but stripping trailing newlines
     let lines: Vec<Vec<u8>> = src
         .lines()
         .map(|line| {
@@ -139,7 +201,6 @@ fn parse_ascii_image(src: &str, target_w: usize, target_h: usize) -> AsciiGrid {
     let raw_h = lines.len().max(1);
     let raw_w = lines.iter().map(|l| l.len()).max().unwrap_or(1).max(1);
 
-    // Build a raw grid (pad short lines with spaces = idx 0)
     let mut raw_cells = vec![0u8; raw_w * raw_h];
     for (y, line) in lines.iter().enumerate() {
         for (x, &v) in line.iter().enumerate() {

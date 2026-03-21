@@ -11,10 +11,16 @@ use crate::AnimationParams;
 use crate::editor_view::AsciiRenderView;
 use crate::ascii_grid_view::AsciiGridDisplay;
 use crate::ascii_image_display::AsciiImageDisplay;
+use crate::ascii_bank::{AsciiBank, CHARSET_LEN};
+use crate::render::color_system::ColorPalette;
 use std::sync::Mutex;
 
+// Window sized for 46×36 grid at proper monospace aspect (0.60 w/h ratio).
+// Grid area: 46 cols × ~7.2px = 331w, 36 rows × 12px = 432h
+// Chrome: header(44) + preset(32) + controls(88) = 164px
+// Total: ~500w × 596h — slightly wider for breathing room
 pub(crate) const WINDOW_WIDTH: u32 = 540;
-pub(crate) const WINDOW_HEIGHT: u32 = 270;
+pub(crate) const WINDOW_HEIGHT: u32 = 600;
 
 // ─── Machine presets ──────────────────────────────────────────────────────────
 //
@@ -51,24 +57,27 @@ pub enum Theme {
     NoniDark,
     Paris,
     Rooney,
+    BrazilLight,
 }
 
 impl Theme {
     fn css_class(self) -> &'static str {
         match self {
-            Self::NoniLight => "theme-noni-light",
-            Self::NoniDark  => "theme-noni-dark",
-            Self::Paris     => "theme-paris",
-            Self::Rooney    => "theme-rooney",
+            Self::NoniLight   => "theme-noni-light",
+            Self::NoniDark    => "theme-noni-dark",
+            Self::Paris       => "theme-paris",
+            Self::Rooney      => "theme-rooney",
+            Self::BrazilLight => "theme-brazil-light",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::NoniLight => "noni ☀",
-            Self::NoniDark  => "noni ◉",
-            Self::Paris     => "paris",
-            Self::Rooney    => "rooney",
+            Self::NoniLight   => "noni ☀",
+            Self::NoniDark    => "noni ◉",
+            Self::Paris       => "paris",
+            Self::Rooney      => "rooney",
+            Self::BrazilLight => "brasil ☀",
         }
     }
 }
@@ -77,11 +86,12 @@ impl Data for Theme {
     fn same(&self, other: &Self) -> bool { self == other }
 }
 
-const THEMES: [Theme; 4] = [
+const THEMES: [Theme; 5] = [
     Theme::NoniLight,
     Theme::NoniDark,
     Theme::Paris,
     Theme::Rooney,
+    Theme::BrazilLight,
 ];
 
 // ─── Model ────────────────────────────────────────────────────────────────────
@@ -91,13 +101,20 @@ pub struct EditorData {
     pub params: Arc<SssssssssamplerParams>,
     pub theme: Theme,
     pub preset_idx: usize,
+    /// Increments on every event — used only as a binding trigger, not for time.
     pub frame_update_counter: usize,
+    /// Increments exactly once per UpdateFrameBuffer — used as the animation clock.
+    /// Decoupled from event frequency so audio bursts don't cause scroll jumps.
+    #[lens(ignore)]
+    pub anim_tick: u64,
     #[lens(ignore)]
     pub gui_ctx: Arc<dyn GuiContext>,
     #[lens(ignore)]
     pub anim_params: Arc<Mutex<AnimationParams>>,
     #[lens(ignore)]
     pub frame_buffer: Arc<Mutex<Option<crate::render::FrameBuffer>>>,
+    #[lens(ignore)]
+    pub ascii_bank: crate::ascii_bank::AsciiBank,
 }
 
 pub enum EditorEvent {
@@ -105,12 +122,23 @@ pub enum EditorEvent {
     PrevPreset,
     NextPreset,
     UpdateFrameBuffer,
+    Tick,  // Timer event for continuous updates
 }
 
 impl Model for EditorData {
-    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
-        // Increment counter for periodic updates
+    fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
+        // Increment counter on EVERY event (makes binding trigger continuously)
         self.frame_update_counter = self.frame_update_counter.wrapping_add(1);
+
+        // Broadcast Tick to entire view tree so AsciiImageDisplay receives it
+        // and can call needs_redraw() to keep the canvas painting continuously.
+        if self.frame_update_counter % 2 == 0 {
+            cx.emit_custom(
+                Event::new(EditorEvent::Tick)
+                    .target(Entity::root())
+                    .propagate(Propagation::Subtree),
+            );
+        }
 
         event.map(|e: &EditorEvent, _| match e {
             EditorEvent::SetTheme(t) => self.theme = *t,
@@ -126,39 +154,307 @@ impl Model for EditorData {
                     self.apply_preset();
                 }
             }
+            EditorEvent::Tick => {
+                // Trigger frame buffer update on every tick (continuous animation)
+                // This makes the display feel alive even without audio
+            }
             EditorEvent::UpdateFrameBuffer => {
-                // Generate animated frame buffer with RMS-driven visuals
                 if let Ok(anim_params) = self.anim_params.lock() {
-                    let mut frame_buffer = crate::render::FrameBuffer::new(36, 46);
-                    let brightness = 0.3 + (anim_params.rms * 0.7);
+                    const COLS: u32 = 46;
+                    const ROWS: u32 = 36;
+                    const BANK_COLS: usize = 46;
+                    const BANK_ROWS: usize = 36;
+                    const BASE_MARGIN: usize = 2;
+                    const OVERLAY_MARGIN: usize = 6;
 
-                    // Add time-based wave animation for visual interest
-                    let time_phase = ((anim_params.instability * 100.0) as u32) % 360;
-                    let wave = ((time_phase as f32 * std::f32::consts::PI / 180.0).sin() * 0.3 + 0.3).max(0.1);
+                    let mut frame_buffer = crate::render::FrameBuffer::new(COLS, ROWS);
 
-                    for row in 0..46u32 {
-                        for col in 0..36u32 {
-                            let idx = ((row * 36 + col) * 4) as usize;
+                    let instability = anim_params.instability;
+                    let playing = anim_params.playing;
 
-                            // Pattern: checkerboard + wave modulation
-                            let checkerboard = ((col + row + (time_phase / 30)) % 2) == 0;
-                            let layer_mod = ((col / 6 + row / 8) % 2) as f32;
+                    // ── Read DSP params for visual effects ──
+                    let filter_val = self.params.filter_cutoff.value(); // 0.0–1.0
+                    let mix_val    = self.params.mix.value();           // 0.0–1.0
+                    let bit_depth  = self.params.bit_depth.value();     // 4.0–16.0
+                    let jitter_val = self.params.jitter.value();        // 0.0–1.0
 
-                            let intensity = brightness * (0.7 + wave * layer_mod);
+                    // Filter controls base image visibility (lower filter = base fades)
+                    let base_visibility = filter_val.clamp(0.0, 1.0);
+                    // Mix controls overlay: 100% mix → 80% opacity, 0% mix → 0%
+                    // No filter interaction for overlays
+                    let overlay_visibility = mix_val.clamp(0.0, 1.0) * 0.80;
 
-                            let (r, g, b) = if checkerboard {
-                                // Soft Violet with wave
-                                let v = (intensity * 122.0).min(255.0) as u8;
-                                (v, (intensity * 108.0).min(255.0) as u8, 255)
+                    // Glitch: ONLY when bit depth < 11. Scales 0% at 11 → 20% at 4.
+                    let glitch_intensity = if bit_depth < 11.0 {
+                        ((11.0 - bit_depth) / 7.0).clamp(0.0, 1.0) * 0.20
+                    } else {
+                        0.0
+                    };
+
+                    let palette = match self.theme {
+                        Theme::NoniLight   => ColorPalette::noni_light(),
+                        Theme::NoniDark    => ColorPalette::noni_dark(),
+                        Theme::Paris       => ColorPalette::paris(),
+                        Theme::Rooney      => ColorPalette::rooney(),
+                        Theme::BrazilLight => ColorPalette::brazil_light(),
+                    };
+
+                    // Store theme background sRGB for display canvas
+                    let to_u8 = |v: f32| (v.powf(1.0 / 2.2) * 255.0) as u8;
+                    frame_buffer.bg_rgb = [
+                        to_u8(palette.background.r),
+                        to_u8(palette.background.g),
+                        to_u8(palette.background.b),
+                    ];
+
+                    // ── Play/stop state ──
+                    // When playing: tick advances normally. When stopped: slow decay.
+                    // "Twist down" — animation speed decays exponentially when stopped.
+                    if playing {
+                        self.anim_tick = self.anim_tick.wrapping_add(1);
+                    } else {
+                        // Stopped: advance at 1/8th speed for a winding-down effect
+                        if self.anim_tick % 8 == 0 {
+                            self.anim_tick = self.anim_tick.wrapping_add(1);
+                        } else {
+                            self.anim_tick = self.anim_tick.wrapping_add(0);
+                        }
+                    }
+                    let t = self.anim_tick as f32;
+
+                    // ── BPM-synced timing ──
+                    let bpm = anim_params.bpm.clamp(40.0, 200.0);
+                    let ticks_per_beat = 60.0 * 60.0 / bpm;
+                    let ticks_per_bar = ticks_per_beat * 4.0;
+                    let ticks_per_half = ticks_per_beat * 2.0;
+
+                    // When stopped, everything runs at reduced intensity
+                    let play_factor = if playing { 1.0f32 } else { 0.15 };
+
+                    // Base image: ping-pong scroll over 4 bars
+                    let base_cycle = ticks_per_bar * 4.0;
+                    let base_phase = (t % base_cycle) / base_cycle;
+                    let base_pos = if base_phase < 0.5 { base_phase * 2.0 } else { 2.0 - base_phase * 2.0 };
+                    let row_scroll = (base_pos * (BANK_ROWS - 1) as f32) as usize;
+
+                    // Horizontal drift: ±6 columns over 4 bars, regenerates each cycle
+                    // Adds more horizontal space/movement to core image
+                    let drift_cycle = ticks_per_bar * 4.0;
+                    let drift_phase = t / drift_cycle;
+                    let col_drift = ((drift_phase * std::f32::consts::TAU).sin() * 6.0
+                        + (drift_phase * 2.7).sin() * 3.0) as i32; // compound drift
+
+                    let img_count = self.ascii_bank.len();
+
+                    // ── Overlay slots ──
+                    const NUM_SLOTS: usize = 3;
+                    let fade_period = ticks_per_bar * 2.0;
+                    const HOLD_THRESHOLD: f32 = 0.15;
+
+                    struct OverlaySlot {
+                        img_idx: usize,
+                        alpha: f32,
+                        row_shift: usize,
+                        col_shift: i32,
+                        color_idx: usize,
+                        render_seed: u32,
+                    }
+
+                    let slots: [OverlaySlot; NUM_SLOTS] = std::array::from_fn(|i| {
+                        let phase_offset = i as f32 * (fade_period / NUM_SLOTS as f32);
+                        let sin_val = ((t + phase_offset) / fade_period * std::f32::consts::TAU).sin();
+                        let raw_alpha = ((sin_val - HOLD_THRESHOLD) / (1.0 - HOLD_THRESHOLD))
+                            .clamp(0.0, 1.0) * overlay_visibility * play_factor;
+
+                        let cycle = ((t + phase_offset) / fade_period) as usize;
+                        let img_idx = 1 + (i + cycle * NUM_SLOTS) % (img_count - 1);
+
+                        // Overlays move independently — different speeds + directions
+                        // Each slot has its own row speed and col speed that change per cycle
+                        let row_speed = 1.0 / ticks_per_half * (1.0 + i as f32 * 0.5);
+                        let row_shift = ((t * row_speed) as usize) % BANK_ROWS;
+
+                        // Col shift changes every cycle — overlays wander all over the place
+                        let hash = (cycle as u32).wrapping_mul(2654435761).wrapping_add(i as u32 * 1013904223);
+                        let base_col_shift = ((hash >> 16) % 31) as i32 - 15;
+                        // Add slow sinusoidal drift per-slot so they're always moving
+                        let slot_drift = ((t * 0.01 + i as f32 * 2.1).sin() * 8.0) as i32;
+                        let col_shift = base_col_shift + slot_drift;
+
+                        let render_seed = hash.wrapping_mul(48271);
+
+                        OverlaySlot {
+                            img_idx,
+                            alpha: raw_alpha,
+                            row_shift,
+                            col_shift,
+                            color_idx: i % 4,
+                            render_seed,
+                        }
+                    });
+
+                    for row in 0..ROWS {
+                        for col in 0..COLS {
+                            let idx = ((row * COLS + col) * 4) as usize;
+                            let ru = row as usize;
+                            let cu = col as usize;
+
+                            let bank_row = (ru * BANK_ROWS) / ROWS as usize;
+
+                            // Base image with drift + margin
+                            let in_base_margin = ru < BASE_MARGIN || ru >= (ROWS as usize - BASE_MARGIN);
+                            let drifted_col = cu as i32 + col_drift;
+                            let bank_col_base = if drifted_col >= 0 && drifted_col < BANK_COLS as i32 {
+                                drifted_col as usize
                             } else {
-                                // Muted Green with wave
-                                ((intensity * 76.0).min(255.0) as u8, (intensity * 175.0).min(255.0) as u8, (intensity * 130.0).min(255.0) as u8)
+                                cu // fallback to undrifted if out of bounds
+                            };
+                            let src_row = (bank_row + row_scroll) % BANK_ROWS;
+                            let base_raw = if in_base_margin {
+                                0.0
+                            } else {
+                                self.ascii_bank.get_cell(0, bank_col_base, src_row) as f32
+                            };
+                            let is_base = base_raw > 0.0 && base_visibility > 0.05;
+
+                            // ── Overlay: full layer behind base, show ALL chars ──
+                            let in_overlay_margin = ru < OVERLAY_MARGIN || ru >= (ROWS as usize - OVERLAY_MARGIN);
+                            let mut best_alpha = 0.0f32;
+                            let mut best_density = 0.0f32;
+                            let mut best_char_idx = 0usize;
+                            let mut best_color_idx = 0usize;
+                            if !in_overlay_margin {
+                                for slot in &slots {
+                                    if slot.alpha < 0.01 { continue; }
+                                    let r2 = (bank_row + slot.row_shift) % BANK_ROWS;
+                                    let shifted_col = cu as i32 + slot.col_shift;
+                                    if shifted_col < 0 || shifted_col >= BANK_COLS as i32 { continue; }
+
+                                    let raw = self.ascii_bank.get_cell(slot.img_idx, shifted_col as usize, r2);
+                                    if raw == 0 { continue; }
+
+                                    // Show ALL overlay chars — no render mask
+                                    if slot.alpha > best_alpha {
+                                        best_alpha = slot.alpha;
+                                        best_char_idx = (raw as usize).min(86); // ASCII only
+                                        best_density = raw as f32 / (CHARSET_LEN - 1) as f32;
+                                        best_color_idx = slot.color_idx;
+                                    }
+                                }
+                            }
+                            let has_overlay = best_alpha > 0.01;
+
+                            // Noise values
+                            let noise_seed = col.wrapping_mul(1664525)
+                                .wrapping_add(row.wrapping_mul(22695477))
+                                .wrapping_add(self.anim_tick as u32 * 134775813);
+                            let noise        = ((noise_seed >> 16) & 0xFF) as f32 / 255.0;
+                            let dust_present = ((noise_seed >>  8) & 0xFF) as f32 / 255.0;
+                            let dust_opacity = ((noise_seed      ) & 0xFF) as f32 / 255.0;
+
+                            // Only 5% of overlay chars get affected by dust
+                            let dust_over_overlay = has_overlay && dust_present < 0.05;
+
+                            // Base image: per-frame life (2% chance of ±1 char jitter)
+                            let base_idx = if is_base {
+                                let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                                let life_roll = ((life_seed >> 16) & 0xFF) as f32 / 255.0;
+                                if life_roll < 0.02 {
+                                    let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
+                                    (base_raw as i32 + dir).clamp(1, 83) as usize
+                                } else {
+                                    base_raw as usize
+                                }
+                            } else {
+                                0
                             };
 
-                            frame_buffer.pixels[idx] = r;
-                            frame_buffer.pixels[idx + 1] = g;
-                            frame_buffer.pixels[idx + 2] = b;
-                            frame_buffer.pixels[idx + 3] = 255;
+                            // ── Compositing: overlay behind, base on top ──
+                            // Layer order: background → overlay → base
+                            let bg = palette.background;
+                            let density;
+                            let mut density_idx;
+                            let (mut r, mut g, mut b);
+
+                            if has_overlay && !dust_over_overlay {
+                                // Start with overlay layer (strong, behind base)
+                                let c = palette.secondary[best_color_idx];
+                                let ov_alpha = best_alpha * (0.60 + best_density * 0.30) * overlay_visibility;
+                                r = bg.r + (c.r - bg.r) * ov_alpha;
+                                g = bg.g + (c.g - bg.g) * ov_alpha;
+                                b = bg.b + (c.b - bg.b) * ov_alpha;
+                                density_idx = best_char_idx;
+                                density = best_density;
+
+                                // If base also has content here, composite base ON TOP
+                                if is_base {
+                                    let c2 = palette.primary;
+                                    let base_alpha = base_visibility * (0.85 + (base_raw / (CHARSET_LEN - 1) as f32) * 0.15);
+                                    r = r + (c2.r - r) * base_alpha;
+                                    g = g + (c2.g - g) * base_alpha;
+                                    b = b + (c2.b - b) * base_alpha;
+                                    density_idx = base_idx;
+                                }
+                            } else if is_base {
+                                // Base only (no overlay here)
+                                let c = palette.primary;
+                                let alpha = base_visibility * (0.85 + (base_raw / (CHARSET_LEN - 1) as f32) * 0.15);
+                                r = bg.r + (c.r - bg.r) * alpha;
+                                g = bg.g + (c.g - bg.g) * alpha;
+                                b = bg.b + (c.b - bg.b) * alpha;
+                                density_idx = base_idx;
+                                density = base_raw / (CHARSET_LEN - 1) as f32;
+                            } else {
+                                // Empty cell — dust
+                                density_idx = 0;
+                                density = 0.0;
+                                if dust_present < 0.66 || dust_over_overlay {
+                                    let c = palette.secondary[3];
+                                    let op = 0.06 + dust_opacity.powf(0.35) * 0.44;
+                                    r = bg.r + (c.r - bg.r) * op;
+                                    g = bg.g + (c.g - bg.g) * op;
+                                    b = bg.b + (c.b - bg.b) * op;
+                                } else {
+                                    r = bg.r;
+                                    g = bg.g;
+                                    b = bg.b;
+                                }
+                            }
+                            let _ = density; // used implicitly via density_idx
+
+                            // ── Clamp ALL chars to ASCII range (0–86) by default ──
+                            // Block/box elements (87+) are ONLY allowed during glitch
+                            let mut final_density_idx = density_idx.min(86);
+
+                            // ── Glitch: 1–4% of chars get block elements (bit depth < 11) ──
+                            if glitch_intensity > 0.0 && density_idx > 0 {
+                                let glitch_seed = noise_seed.wrapping_mul(2246822507);
+                                let glitch_roll = ((glitch_seed >> 12) & 0xFF) as f32 / 255.0;
+                                // glitch_intensity 0–0.20 → max 2% of chars affected
+                                if glitch_roll < glitch_intensity * 0.10 {
+                                    // Glitch: pick ANY char from full CHARSET (blocks, box drawing, all of it)
+                                    let block_idx = 1 + ((glitch_seed >> 4) as usize % (CHARSET_LEN - 1));
+                                    final_density_idx = block_idx.min(CHARSET_LEN - 1);
+                                    let glitch_color = palette.emphasis;
+                                    let gm = 0.3;
+                                    r = r + (glitch_color.r - r) * gm;
+                                    g = g + (glitch_color.g - g) * gm;
+                                    b = b + (glitch_color.b - b) * gm;
+                                }
+                            }
+
+                            // Dust glyph: only light ASCII punctuation (. ' ` , : ;)
+                            // Never use block elements — they're too visually heavy for dust
+                            if final_density_idx == 0 && (dust_present < 0.66 || dust_over_overlay) {
+                                let pick = ((dust_opacity * 6.0) as usize).min(5);
+                                final_density_idx = 1 + pick; // indices 1–6: . ' ` , : ;
+                            }
+
+                            let to_u8 = |v: f32| (v.powf(1.0 / 2.2) * 255.0) as u8;
+                            frame_buffer.pixels[idx]     = to_u8(r);
+                            frame_buffer.pixels[idx + 1] = to_u8(g);
+                            frame_buffer.pixels[idx + 2] = to_u8(b);
+                            frame_buffer.pixels[idx + 3] = final_density_idx as u8;
                         }
                     }
 
@@ -196,33 +492,9 @@ impl EditorData {
     }
 
     fn apply_preset(&self) {
-        // Trigger frame buffer update when preset changes
-        if let Ok(anim_params) = self.anim_params.lock() {
-            let mut frame_buffer = crate::render::FrameBuffer::new(36, 46);
-            let brightness = 0.3 + (anim_params.rms * 0.7);
-
-            for row in 0..46u32 {
-                for col in 0..36u32 {
-                    let idx = ((row * 36 + col) * 4) as usize;
-                    let checkerboard = (col + row) % 2 == 0;
-
-                    let (r, g, b) = if checkerboard {
-                        let v = (brightness * 122.0) as u8;
-                        (v, (brightness * 108.0) as u8, 255)
-                    } else {
-                        ((brightness * 76.0) as u8, (brightness * 175.0) as u8, (brightness * 130.0) as u8)
-                    };
-
-                    frame_buffer.pixels[idx] = r;
-                    frame_buffer.pixels[idx + 1] = g;
-                    frame_buffer.pixels[idx + 2] = b;
-                    frame_buffer.pixels[idx + 3] = 255;
-                }
-            }
-
-            if let Ok(mut fb) = self.frame_buffer.lock() {
-                *fb = Some(frame_buffer);
-            }
+        // Clear frame buffer on preset change — UpdateFrameBuffer will fill it shortly
+        if let Ok(mut fb) = self.frame_buffer.lock() {
+            *fb = Some(crate::render::FrameBuffer::new(46, 36));
         }
 
         let p = &PRESETS[self.preset_idx];
@@ -262,27 +534,40 @@ pub(crate) fn create(
     editor_state: Arc<ViziaState>,
     anim_params: Arc<Mutex<AnimationParams>>,
 ) -> Option<Box<dyn Editor>> {
+    // Build the ASCII image bank once — images are 46 wide × 36 tall natively
+    let ascii_bank = AsciiBank::from_raw_images(
+        &[
+            include_str!("../assets/img01.txt"),
+            include_str!("../assets/img02.txt"),
+            include_str!("../assets/img03.txt"),
+            include_str!("../assets/img04.txt"),
+            include_str!("../assets/img05.txt"),
+            include_str!("../assets/img06.txt"),
+            include_str!("../assets/img07.txt"),
+            include_str!("../assets/img08.txt"),
+            include_str!("../assets/img09.txt"),
+            include_str!("../assets/img10.txt"),
+            include_str!("../assets/img11.txt"),
+            include_str!("../assets/img12.txt"),
+            include_str!("../assets/img13.txt"),
+            include_str!("../assets/img14.txt"),
+            include_str!("../assets/img15.txt"),
+            include_str!("../assets/img16.txt"),
+            include_str!("../assets/img17.txt"),
+            include_str!("../assets/img18.txt"),
+            include_str!("../assets/img19.txt"),
+            include_str!("../assets/img20.txt"),
+        ],
+        46, // cols = max line width of images
+        36, // rows = line count of images
+    );
+
     create_vizia_editor(
         editor_state,
         ViziaTheming::Custom,
         move |cx, gui_ctx| {
-            // Create initial frame buffer with test pattern
-            let mut initial_frame = crate::render::FrameBuffer::new(36, 46);
-            for row in 0..46u32 {
-                for col in 0..36u32 {
-                    let idx = ((row * 36 + col) * 4) as usize;
-                    let checkerboard = (col + row) % 2 == 0;
-                    let (r, g, b) = if checkerboard {
-                        (80, 50, 255)  // Soft Violet
-                    } else {
-                        (50, 100, 80)  // Muted Green
-                    };
-                    initial_frame.pixels[idx] = r;
-                    initial_frame.pixels[idx + 1] = g;
-                    initial_frame.pixels[idx + 2] = b;
-                    initial_frame.pixels[idx + 3] = 255;
-                }
-            }
+            // Initial dark frame (46×36 matching image bank)
+            let initial_frame = crate::render::FrameBuffer::new(46, 36);
             let frame_buffer = Arc::new(Mutex::new(Some(initial_frame)));
 
             EditorData {
@@ -290,9 +575,11 @@ pub(crate) fn create(
                 theme: Theme::NoniDark,
                 preset_idx: DEFAULT_PRESET,
                 frame_update_counter: 0,
+                anim_tick: 0,
                 gui_ctx: gui_ctx.clone(),
                 anim_params: anim_params.clone(),
                 frame_buffer,
+                ascii_bank: ascii_bank.clone(),
             }
             .build(cx);
 
@@ -303,6 +590,14 @@ pub(crate) fn create(
                 let theme = theme_lens.get(cx);
 
                 VStack::new(cx, |cx| {
+                    // Continuous frame buffer updates for always-alive animation
+                    // Emit UpdateFrameBuffer on every frame
+                    Binding::new(cx, EditorData::frame_update_counter, |cx, counter_lens| {
+                        // Counter increments on every event - use it as a trigger
+                        let _ = counter_lens.get(cx);
+                        cx.emit(EditorEvent::UpdateFrameBuffer);
+                    });
+
                     // ── Header ────────────────────────────────────────────────
                     HStack::new(cx, |cx| {
                         Label::new(cx, "sssssssssampler").class("plugin-title");

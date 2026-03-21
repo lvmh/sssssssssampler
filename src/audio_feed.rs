@@ -31,6 +31,10 @@ pub struct AnimationParams {
     pub motion_speed: f32,
     /// Raw RMS level for additional visualizations
     pub rms: f32,
+    /// Effective BPM from host transport (halved if >115 for half-time)
+    pub bpm: f32,
+    /// Whether the DAW transport is currently playing
+    pub playing: bool,
 }
 
 impl Default for AnimationParams {
@@ -43,6 +47,8 @@ impl Default for AnimationParams {
             brightness: 1.0,
             motion_speed: 1.0,
             rms: 0.0,
+            bpm: 120.0,
+            playing: false,
         }
     }
 }
@@ -102,6 +108,8 @@ impl AudioFeed {
         let brightness = amplitude_to_brightness(rms);
         let motion_speed = amplitude_to_motion_speed(rms);
 
+        // Preserve existing BPM (set by update() from process context)
+        let existing = self.shared_params.lock().ok().map(|p| (p.bpm, p.playing)).unwrap_or((120.0, false));
         let anim_params = AnimationParams {
             instability,
             quantization,
@@ -110,6 +118,8 @@ impl AudioFeed {
             brightness,
             motion_speed,
             rms,
+            bpm: existing.0,
+            playing: existing.1,
         };
 
         // Update shared parameters
@@ -128,6 +138,8 @@ impl AudioFeed {
         target_sample_rate: f32,
         bit_depth: f32,
         jitter: f32,
+        host_bpm: f32,
+        host_playing: bool,
     ) {
         // Compute remapped parameters
         let instability = sample_rate_to_instability(target_sample_rate);
@@ -140,6 +152,9 @@ impl AudioFeed {
         let brightness = amplitude_to_brightness(rms);
         let motion_speed = amplitude_to_motion_speed(rms);
 
+        // Effective BPM: above 115 treat as half-time
+        let effective_bpm = if host_bpm > 115.0 { host_bpm * 0.5 } else { host_bpm };
+
         let anim_params = AnimationParams {
             instability,
             quantization,
@@ -148,6 +163,8 @@ impl AudioFeed {
             brightness,
             motion_speed,
             rms,
+            bpm: effective_bpm,
+            playing: host_playing,
         };
 
         // Update shared parameters
@@ -213,7 +230,7 @@ mod tests {
         feed.push_sample(0.1);
 
         // Update with DSP values
-        feed.update(26_040.0, 12.0, 0.01);
+        feed.update(26_040.0, 12.0, 0.01, 120.0, true);
 
         let params = feed.get_params();
         // Instability should be high for low SR

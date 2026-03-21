@@ -73,6 +73,7 @@ impl UiRenderer {
             width,
             height,
             pixels,
+            bg_rgb: [0, 0, 0],
         })
     }
 }

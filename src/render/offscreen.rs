@@ -10,6 +10,8 @@ pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>, // RGBA format, width × height × 4 bytes
+    /// Theme background color in sRGB [R, G, B] for canvas fill
+    pub bg_rgb: [u8; 3],
 }
 
 impl FrameBuffer {
@@ -18,6 +20,7 @@ impl FrameBuffer {
             width,
             height,
             pixels: vec![0u8; (width * height * 4) as usize],
+            bg_rgb: [0, 0, 0],
         }
     }
 }
