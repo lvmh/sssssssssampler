@@ -33,12 +33,23 @@ Display View (ascii_image_display.rs)
 |------|---------|
 | `src/editor.rs` | Animation loop, all compositing logic |
 | `src/ascii_image_display.rs` | femtovg rendering, font loading, cell sizing |
-| `src/ascii_bank.rs` | CHARSET (124 chars), image parsing, density mapping |
+| `src/ascii_bank.rs` | CHARSET (127 chars), image parsing |
 | `src/audio_feed.rs` | AnimationParams struct (BPM, playing, RMS, etc.) |
 | `src/render/offscreen.rs` | FrameBuffer struct |
 | `src/render/color_system.rs` | ColorPalette per theme (5 themes) |
 | `assets/style.css` | Window layout (540×600), theme CSS |
 | `assets/img01.txt`–`img20.txt` | 20 raw ASCII art source images |
+
+---
+
+## Core Rule: Character Preservation
+
+**ASCII artwork characters pass through exactly as they appear in the source files.**
+
+- `char_to_idx()` does exact match only — if a char isn't in CHARSET, it becomes space (0)
+- No density approximation, no substitution
+- The ONLY way a character changes from source is the **2% glitch** (bit depth < 11)
+- This applies to both core and overlay images equally
 
 ---
 
@@ -59,19 +70,45 @@ struct FrameBuffer {
 
 ---
 
-## CHARSET (124 chars)
+## CHARSET (127 chars)
 
 ```
-0–83:    Standard ASCII (artwork-safe — exact match always preserved)
+0–83:    Standard ASCII (artwork-safe — exact match preserved)
          Space . ' ` , : ; - ~ _ ! i l 1 I r c v u n x z j f t
          L C J Y F o a e s y h k d b p q g S Z w K U X T H
          R E D N V A Q P B G O M 0 W ^ / | \ < > ( ) + = [ ] { } * % # & $ @
 
-84–105:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
-106–123: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬)
+84–86:   Additional ASCII found in source images: " m 8
+
+87–108:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
+109–126: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬)
 ```
 
-**Rule**: Indices 84+ (blocks/box) are NEVER used in normal rendering. All displayed chars are clamped to 0–83 (pure ASCII). Block elements only appear during glitch mode (bit depth < 11), affecting max 1–4% of characters.
+**Indices 87+ (blocks/box)**: NEVER used in normal rendering. All displayed chars are clamped to 0–86 (ASCII). Block/box elements only appear during the 2% glitch effect.
+
+---
+
+## Image Cycling (BPM-Synced)
+
+All 20 images participate as both core and overlay. No image is permanently assigned to any role.
+
+### Core Image
+- **Changes every 4 bars**
+- Cycles through all 20 images: `core_img = (t / (ticks_per_bar * 4)) % 20`
+- **Scatter-dissolve transition** over half a bar when changing:
+  - Per-cell hash determines old vs new: `hash < transition_progress → new, else old`
+  - Creates a random pixel-by-pixel overwrite effect
+
+### Overlay Slots (3 independent)
+| Slot | Cycle Period | Character |
+|------|-------------|-----------|
+| 0 | **4 bars** | Fast, energetic |
+| 1 | **6 bars** | Medium |
+| 2 | **8 bars** | Slow, atmospheric |
+
+- Each slot picks an image from the pool, **skipping the current core image** (no duplicates)
+- Each slot moves independently (own scroll speed + sinusoidal col drift)
+- Fade: sine wave over the slot's period, phase-offset between slots
 
 ---
 
@@ -88,13 +125,17 @@ At 120 BPM effective:
   ticks_per_half  = 60    (beat × 2)
 ```
 
-### Play/Stop
+### Two Independent Clocks
 
-```
-Playing:  anim_tick += 1 every frame
-Stopped:  anim_tick += 1 every 8th frame (1/8 speed "twist down")
-          Overlay alpha × 0.15 (dims to 15%)
-```
+| Clock | Drives | When Stopped |
+|-------|--------|-------------|
+| `anim_tick` | Image cycling, scrolling, overlay fade, transitions | **Freezes** — all images pause in place |
+| `dust_tick` (`frame_update_counter`) | Dust noise seed, dust particle positions | **Always advances** — dust keeps moving |
+
+When transport is paused:
+- All images (core + overlays) freeze at their current position and stay fully visible
+- Dust particles continue animating over the frozen images
+- When transport resumes, images continue cycling from where they paused
 
 ---
 
@@ -102,142 +143,102 @@ Stopped:  anim_tick += 1 every 8th frame (1/8 speed "twist down")
 
 | Parameter | Range | Visual Effect |
 |-----------|-------|---------------|
-| **Filter** | 0–1 | Base image opacity only: 0→invisible, 1→full. No effect on overlays. |
-| **Mix** | 0–1 | Overlay opacity: mix×0.80 (so mix@100%→80% overlay, mix@0%→invisible). No effect on base image. |
-| **Bit depth** | 4–16 | Glitch mode: only below 11. Scales 0% at 11 → 20% at 4. Of affected chars, 1–4% get block element replacements |
-| **Jitter** | 0–1 | No direct visual effect currently |
-| **BPM** | host | All timing: scroll speed, overlay fade period, overlay drift speed |
-| **Playing** | host | Full speed vs 1/8 twist-down; overlay dims to 15% when stopped |
+| **Filter** | 0–1 | Base/core image opacity only: 0→invisible, 1→full. No effect on overlays. |
+| **Mix** | 0–1 | Overlay opacity: `mix × 0.80` (max 80% at mix=100%). No effect on core image. |
+| **Bit depth** | 4–16 | Glitch: only below 11. Max 2% of chars get replaced with full CHARSET (blocks, box drawing). |
+| **Jitter** | 0–1 | No direct visual effect. |
+| **BPM** | host | All timing: image cycling (4/6/8 bars), scroll speed, overlay drift. |
+| **Playing** | host | Images freeze when stopped. Dust keeps playing. |
 
 ---
 
 ## Layer Compositing
 
-Each cell is composited in this order (back to front):
+Each cell is composited back-to-front:
 
 ### Layer 1: Background
-- Solid fill with `palette.background` (exact theme color via `bg_rgb`)
+- Solid fill with `palette.background` (exact sRGB via `bg_rgb`)
 
-### Layer 2: Overlay Images (imgs 1–19)
-- **3 independent slots**, each cycling through images 1–19
-- **ALL overlay characters render** (no sparse mask — full images visible)
-- Composited as transparency over background: `bg + (overlay_color - bg) × alpha`
-- Alpha = `slot_fade × (0.60 + density×0.30) × overlay_visibility`
-- `overlay_visibility = mix × 0.80` (max 80% at mix=100%, no filter interaction)
-- Only 5% of overlay chars affected by dust
-- 6-row margin top/bottom (empty)
+### Layer 2: Overlay Images
+- **All overlay characters render** exactly as source (no masking, no density modification)
+- Alpha blend over background: `bg + (overlay_color - bg) × alpha`
+- Alpha = `slot_fade × 0.80 × overlay_visibility`
+- `overlay_visibility = mix × 0.80`
+- 6-row margin top/bottom
+- Only 2% of overlay chars affected by dust
+- **Never wraps** — if row scroll pushes past image bounds, cell shows empty
 
-**Per-slot properties:**
+**Per-slot movement:**
 ```
-Fade:       sine wave over 2 bars, 3 slots phase-offset by 2/3 bar
-Image:      cycles through imgs 1–19, advances each fade period
-Row scroll: independent speed per slot (1.0–2.0× half-note rate)
+Row scroll: independent speed (1.0–2.0× half-note rate)
 Col shift:  ±15 random base (per cycle) + ±8 sinusoidal drift (continuous)
 Color:      palette.secondary[slot_index % 4]
 ```
 
-### Layer 3: Base Image (img 0) — composited ON TOP of overlay
-- **Highest priority** — always sits on top of overlays
-- Composited over whatever is behind it: `behind + (primary - behind) × alpha`
-- Alpha = `base_visibility × (0.85 + density×0.15)` where `base_visibility = filter`
-- Ping-pong scrolls over 4 bars (forward then reverse)
-- Horizontal compound drift: `sin(t/4bars) × 6 + sin(t×2.7) × 3` columns
-- 2-row margin top/bottom (empty)
-
-**Per-frame life**: 5% of base cells get ±1 char index jitter each frame (stays in ASCII 1–83). Makes the image shimmer rather than look static.
+### Layer 3: Core Image — composited ON TOP of overlay
+- **Highest priority** — always sits on top
+- Alpha = `base_visibility × (0.85 + density × 0.15)` where `base_visibility = filter`
+- Ping-pong scroll over 4 bars
+- Horizontal compound drift: `sin(phase) × 6 + sin(phase × 2.7) × 3` columns
+- 2-row margin top/bottom
+- **Never wraps** — if scroll pushes past image bounds, cells show empty instead of wrapping to the other side of the image
+- **0.2% per-frame jitter**: subtle ±1 char index shift for shimmer (stays in ASCII 1–83)
 
 ### Layer 4: Dust Particles (empty cells only)
-- **66% of empty cells** filled with dust
+- **66% of empty cells** filled
 - Glyphs: ASCII punctuation only (indices 1–6: `. ' \` , : ;`)
-- Never uses block elements
-- Color: `palette.secondary[3]` blended over background at 6–50% opacity
-- Opacity: power curve (exponent 0.35) for varied brightness
+- Color: `palette.secondary[3]` at 6–50% opacity
+- **Always animating** — uses `dust_tick` which never pauses
 
-### Layer 5: Glitch (bit depth effect)
-- **Only active when bit_depth < 11**
-- Probability: 0% at 11 bits → 20% at 4 bits
-- Of those, only 1–4% of chars get a visible block element replacement (indices 84–105)
-- Color: shifts 30% toward `palette.emphasis`
-- This is the ONLY way block/box characters ever appear on screen
+### Layer 5: Glitch (bit depth < 11 only)
+- **Hard cap: 0.2% of chars maximum** (~1 in 500 per frame)
+- Replaces char with ANY from full CHARSET (blocks, box drawing, all of it)
+- Color shifts 30% toward `palette.emphasis`
+- This is the ONLY way characters ever differ from source
 
 ---
 
 ## Color Rules
 
-**All color is transparency-based.** Colors are always at full saturation; only opacity varies.
+**All color is transparency-based.** Full saturation always; only opacity varies.
 
 ```
-Compositing formula (everywhere):
-  result = background + (foreground - background) × alpha
-
-Never:
-  color × multiplier  (darkens toward black, kills saturation)
-
-Always:
-  bg + (color - bg) × alpha  (true transparency blend)
+Formula (everywhere):  result = background + (foreground - background) × alpha
+Never:                 color × multiplier  (darkens toward black)
 ```
 
-Linear RGB → sRGB conversion: `srgb = linear.powf(1.0/2.2) × 255`
-
----
-
-## Overlay Slot System
-
-```rust
-struct OverlaySlot {
-    img_idx: usize,     // Which image (1–19)
-    alpha: f32,         // Fade level (0–1, from sine wave)
-    row_shift: usize,   // Vertical scroll offset
-    col_shift: i32,     // Horizontal position (wanders)
-    color_idx: usize,   // palette.secondary index (0–3)
-    render_seed: u32,   // Hash seed (unused for masking now)
-}
-```
-
-### Lifecycle
-
-```
-t=0                    t=fade_period/2        t=fade_period
-│                      │                      │
-▼                      ▼                      ▼
-fade in ──── peak ──── fade out ──── invisible ──── next image
-   sin wave above threshold=0.15
-```
-
-Three slots are phase-offset so they stagger: when one peaks, another is fading in.
+Linear RGB → sRGB: `srgb = linear.powf(1.0/2.2) × 255`
 
 ---
 
 ## Themes (5)
 
-| Name | `palette.background` | `palette.primary` | Mood |
-|------|---------------------|-------------------|------|
+| Name | Background | Primary | Mood |
+|------|-----------|---------|------|
 | Noni Dark | `#151805` | `#9BB940` lime | Deep forest |
 | Noni Light | `#F1F3EA` | `#6D8000` olive | Sage daylight |
 | Paris | `#140813` | `#FF5FFF` magenta | Midnight pink |
 | Rooney | `#140001` | `#FC000B` red | Man Utd red |
 | Brazil Light | `#F4FAF4` | `#007500` green | Forest teal |
 
-Each theme has 4 `secondary` colors (used by overlay slots and dust) plus `emphasis` (glitch target).
+Each has 4 `secondary` colors (overlay slots + dust) and `emphasis` (glitch target).
 
 ---
 
 ## Display (ascii_image_display.rs)
 
 ### Font Loading
-
-Runtime search (fast builds, no `include_bytes!`):
+Runtime search (not compile-time, fast builds):
 ```
 ~/Library/Fonts/FiraCodeNerdFontMono-Regular.ttf  (preferred)
 ~/Library/Fonts/FiraCodeNerdFont-Regular.ttf
 ~/Library/Fonts/FiraCode-Regular.ttf
 /Users/calmingwaterpad/Library/Fonts/...          (hardcoded VST fallback)
-/System/Library/Fonts/Menlo.ttc                   (system fallback)
+/System/Library/Fonts/Menlo.ttc
 /System/Library/Fonts/Monaco.ttf
 ```
 
 ### Cell Sizing
-
 ```
 Monospace aspect: 0.60 (width/height)
 cell_h = min(bounds.h/rows, bounds.w/cols/0.60)
@@ -247,8 +248,7 @@ Grid centered within bounds.
 ```
 
 ### Background
-
-Canvas filled with `fb.bg_rgb` — exact theme background color stored in the FrameBuffer.
+Canvas filled with `fb.bg_rgb` — exact theme background color.
 
 ---
 
@@ -256,25 +256,46 @@ Canvas filled with `fb.bg_rgb` — exact theme background color stored in the Fr
 
 ```rust
 COLS = 46              // Display columns
-ROWS = 36              // Display rows (= bank height, min 28 requirement met)
+ROWS = 36              // Display rows (= bank height)
 BANK_COLS = 46         // Source image width
 BANK_ROWS = 36         // Source image height
-BASE_MARGIN = 2        // Empty rows top/bottom for base
+BASE_MARGIN = 2        // Empty rows top/bottom for core
 OVERLAY_MARGIN = 6     // Empty rows top/bottom for overlays
+NUM_SLOTS = 3          // Overlay slots
+SLOT_BARS = [4, 6, 8]  // Bars per overlay cycle
 ```
+
+---
+
+## Scatter-Dissolve Transition
+
+When the core image changes (every 4 bars):
+
+```
+time_in_cycle = t % core_cycle_len
+transition_window = half a bar
+transition_progress = time_in_cycle / transition_window  (0→1)
+
+Per cell:
+  hash(col, row, cycle) → value 0–1
+  if value < transition_progress → show NEW image char
+  else → show OLD image char
+```
+
+Over half a bar, random cells flip from old→new, creating a scatter effect.
 
 ---
 
 ## Noise (no rand crate)
 
 ```rust
-noise_seed = col × 1664525 + row × 22695477 + anim_tick × 134775813
-noise        = bits[16..23] / 255   // General purpose
-dust_present = bits[8..15]  / 255   // Dust threshold
-dust_opacity = bits[0..7]   / 255   // Dust brightness
+noise_seed = col × 1664525 + row × 22695477 + dust_tick × 134775813
+noise        = bits[16..23] / 255
+dust_present = bits[8..15]  / 255
+dust_opacity = bits[0..7]   / 255
 ```
 
-3 independent pseudo-random values per cell per frame. Deterministic, zero allocation.
+Uses `dust_tick` (always advances) so dust keeps moving when paused.
 
 ---
 
@@ -296,23 +317,10 @@ dust_opacity = bits[0..7]   / 255   // Dust brightness
 
 ---
 
-## Image Bank
-
-20 ASCII art files parsed at startup into `AsciiBank`:
-- `img01.txt` = base image (always present, primary color)
-- `img02–20.txt` = overlay pool (cycled through 3 slots)
-
-Parsing: `raw text → char_to_idx() per char → AsciiGrid → resized(46,36)`
-
-`char_to_idx()` exact-matches first (artwork letters preserved), then falls back to nearest visual density.
-
----
-
 ## Performance
 
-- CPU compositing only, flat `Vec<u8>`, no GPU
-- Zero per-frame allocation (FrameBuffer pre-allocated)
-- Deterministic noise (integer hashing, no `rand`)
-- Font loaded once, cached in `RefCell<Option<FontId>>`
-- ~60fps, one UpdateFrameBuffer per Vizia event cycle
-- Lock held briefly per frame (`Mutex<Option<FrameBuffer>>`)
+- CPU compositing, flat `Vec<u8>`, no GPU
+- Zero per-frame allocation
+- Deterministic noise (integer hashing)
+- Font loaded once, cached
+- ~60fps via Vizia event cycle

@@ -208,18 +208,13 @@ impl Model for EditorData {
                     ];
 
                     // ── Play/stop state ──
-                    // When playing: tick advances normally. When stopped: slow decay.
-                    // "Twist down" — animation speed decays exponentially when stopped.
+                    // anim_tick: drives image cycling/scrolling — freezes when stopped
+                    // dust_tick: always advances — dust keeps playing when paused
+                    let dust_tick = self.frame_update_counter as u32;
                     if playing {
                         self.anim_tick = self.anim_tick.wrapping_add(1);
-                    } else {
-                        // Stopped: advance at 1/8th speed for a winding-down effect
-                        if self.anim_tick % 8 == 0 {
-                            self.anim_tick = self.anim_tick.wrapping_add(1);
-                        } else {
-                            self.anim_tick = self.anim_tick.wrapping_add(0);
-                        }
                     }
+                    // When stopped, anim_tick stays frozen — images pause
                     let t = self.anim_tick as f32;
 
                     // ── BPM-synced timing ──
@@ -228,27 +223,36 @@ impl Model for EditorData {
                     let ticks_per_bar = ticks_per_beat * 4.0;
                     let ticks_per_half = ticks_per_beat * 2.0;
 
-                    // When stopped, everything runs at reduced intensity
-                    let play_factor = if playing { 1.0f32 } else { 0.15 };
+                    // When stopped, images stay visible but frozen (dust keeps moving)
+                    let play_factor = 1.0f32;
+
+                    let img_count = self.ascii_bank.len(); // 20 images
+
+                    // ── Core image cycling: new image every 4 bars ──
+                    let core_cycle_len = ticks_per_bar * 4.0;
+                    let core_cycle = (t / core_cycle_len) as usize;
+                    let core_img = core_cycle % img_count;
+                    let prev_core_img = if core_cycle > 0 { (core_cycle - 1) % img_count } else { 0 };
+
+                    // Transition: scatter-dissolve over half a bar when core changes
+                    let time_in_cycle = t % core_cycle_len;
+                    let transition_window = ticks_per_bar * 0.5;
+                    let transition_progress = (time_in_cycle / transition_window).min(1.0);
+                    let in_transition = transition_progress < 1.0;
 
                     // Base image: ping-pong scroll over 4 bars
-                    let base_cycle = ticks_per_bar * 4.0;
-                    let base_phase = (t % base_cycle) / base_cycle;
+                    let base_phase = (t % core_cycle_len) / core_cycle_len;
                     let base_pos = if base_phase < 0.5 { base_phase * 2.0 } else { 2.0 - base_phase * 2.0 };
                     let row_scroll = (base_pos * (BANK_ROWS - 1) as f32) as usize;
 
-                    // Horizontal drift: ±6 columns over 4 bars, regenerates each cycle
-                    // Adds more horizontal space/movement to core image
-                    let drift_cycle = ticks_per_bar * 4.0;
-                    let drift_phase = t / drift_cycle;
+                    // Horizontal drift: ±6 columns, compound sinusoidal
+                    let drift_phase = t / core_cycle_len;
                     let col_drift = ((drift_phase * std::f32::consts::TAU).sin() * 6.0
-                        + (drift_phase * 2.7).sin() * 3.0) as i32; // compound drift
+                        + (drift_phase * 2.7).sin() * 3.0) as i32;
 
-                    let img_count = self.ascii_bank.len();
-
-                    // ── Overlay slots ──
+                    // ── Overlay slots: 4, 6, 8 bar cycles ──
                     const NUM_SLOTS: usize = 3;
-                    let fade_period = ticks_per_bar * 2.0;
+                    const SLOT_BARS: [f32; NUM_SLOTS] = [4.0, 6.0, 8.0];
                     const HOLD_THRESHOLD: f32 = 0.15;
 
                     struct OverlaySlot {
@@ -257,31 +261,28 @@ impl Model for EditorData {
                         row_shift: usize,
                         col_shift: i32,
                         color_idx: usize,
-                        render_seed: u32,
                     }
 
                     let slots: [OverlaySlot; NUM_SLOTS] = std::array::from_fn(|i| {
-                        let phase_offset = i as f32 * (fade_period / NUM_SLOTS as f32);
-                        let sin_val = ((t + phase_offset) / fade_period * std::f32::consts::TAU).sin();
+                        let slot_period = ticks_per_bar * SLOT_BARS[i];
+                        let phase_offset = i as f32 * (slot_period / NUM_SLOTS as f32);
+                        let sin_val = ((t + phase_offset) / slot_period * std::f32::consts::TAU).sin();
                         let raw_alpha = ((sin_val - HOLD_THRESHOLD) / (1.0 - HOLD_THRESHOLD))
                             .clamp(0.0, 1.0) * overlay_visibility * play_factor;
 
-                        let cycle = ((t + phase_offset) / fade_period) as usize;
-                        let img_idx = 1 + (i + cycle * NUM_SLOTS) % (img_count - 1);
+                        let cycle = ((t + phase_offset) / slot_period) as usize;
+                        // Pick image, skip current core image
+                        let mut img_idx = cycle % img_count;
+                        if img_idx == core_img { img_idx = (img_idx + 1) % img_count; }
 
-                        // Overlays move independently — different speeds + directions
-                        // Each slot has its own row speed and col speed that change per cycle
+                        // Independent movement per slot
                         let row_speed = 1.0 / ticks_per_half * (1.0 + i as f32 * 0.5);
                         let row_shift = ((t * row_speed) as usize) % BANK_ROWS;
 
-                        // Col shift changes every cycle — overlays wander all over the place
                         let hash = (cycle as u32).wrapping_mul(2654435761).wrapping_add(i as u32 * 1013904223);
                         let base_col_shift = ((hash >> 16) % 31) as i32 - 15;
-                        // Add slow sinusoidal drift per-slot so they're always moving
                         let slot_drift = ((t * 0.01 + i as f32 * 2.1).sin() * 8.0) as i32;
                         let col_shift = base_col_shift + slot_drift;
-
-                        let render_seed = hash.wrapping_mul(48271);
 
                         OverlaySlot {
                             img_idx,
@@ -289,7 +290,6 @@ impl Model for EditorData {
                             row_shift,
                             col_shift,
                             color_idx: i % 4,
-                            render_seed,
                         }
                     });
 
@@ -309,11 +309,24 @@ impl Model for EditorData {
                             } else {
                                 cu // fallback to undrifted if out of bounds
                             };
-                            let src_row = (bank_row + row_scroll) % BANK_ROWS;
-                            let base_raw = if in_base_margin {
-                                0.0
+                            let src_row = bank_row + row_scroll;
+                            let base_raw = if in_base_margin || src_row >= BANK_ROWS {
+                                0.0 // Never wrap — show empty if past image bounds
+                            } else if in_transition {
+                                // Scatter-dissolve: per-cell hash decides old vs new image
+                                let dissolve_hash = col.wrapping_mul(48271)
+                                    .wrapping_add(row.wrapping_mul(1103515245))
+                                    .wrapping_add(core_cycle as u32 * 2654435761);
+                                let dissolve_val = ((dissolve_hash >> 16) & 0xFF) as f32 / 255.0;
+                                if dissolve_val < transition_progress {
+                                    // New image
+                                    self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32
+                                } else {
+                                    // Old image still showing
+                                    self.ascii_bank.get_cell(prev_core_img, bank_col_base, src_row) as f32
+                                }
                             } else {
-                                self.ascii_bank.get_cell(0, bank_col_base, src_row) as f32
+                                self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32
                             };
                             let is_base = base_raw > 0.0 && base_visibility > 0.05;
 
@@ -326,7 +339,8 @@ impl Model for EditorData {
                             if !in_overlay_margin {
                                 for slot in &slots {
                                     if slot.alpha < 0.01 { continue; }
-                                    let r2 = (bank_row + slot.row_shift) % BANK_ROWS;
+                                    let r2 = bank_row + slot.row_shift;
+                                    if r2 >= BANK_ROWS { continue; } // Never wrap
                                     let shifted_col = cu as i32 + slot.col_shift;
                                     if shifted_col < 0 || shifted_col >= BANK_COLS as i32 { continue; }
 
@@ -344,22 +358,22 @@ impl Model for EditorData {
                             }
                             let has_overlay = best_alpha > 0.01;
 
-                            // Noise values
+                            // Noise values — use dust_tick so dust keeps moving when paused
                             let noise_seed = col.wrapping_mul(1664525)
                                 .wrapping_add(row.wrapping_mul(22695477))
-                                .wrapping_add(self.anim_tick as u32 * 134775813);
+                                .wrapping_add(dust_tick * 134775813);
                             let noise        = ((noise_seed >> 16) & 0xFF) as f32 / 255.0;
                             let dust_present = ((noise_seed >>  8) & 0xFF) as f32 / 255.0;
                             let dust_opacity = ((noise_seed      ) & 0xFF) as f32 / 255.0;
 
-                            // Only 5% of overlay chars get affected by dust
-                            let dust_over_overlay = has_overlay && dust_present < 0.05;
+                            // Only 2% of overlay chars get affected by dust
+                            let dust_over_overlay = has_overlay && dust_present < 0.02;
 
-                            // Base image: per-frame life (2% chance of ±1 char jitter)
+                            // Base image: per-frame life (0.2% chance of ±1 char jitter)
                             let base_idx = if is_base {
                                 let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                                let life_roll = ((life_seed >> 16) & 0xFF) as f32 / 255.0;
-                                if life_roll < 0.02 {
+                                let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
+                                if life_roll < 0.002 {
                                     let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
                                     (base_raw as i32 + dir).clamp(1, 83) as usize
                                 } else {
@@ -377,12 +391,13 @@ impl Model for EditorData {
                             let (mut r, mut g, mut b);
 
                             if has_overlay && !dust_over_overlay {
-                                // Start with overlay layer (strong, behind base)
+                                // Overlay layer — chars pass through exactly as source
                                 let c = palette.secondary[best_color_idx];
-                                let ov_alpha = best_alpha * (0.60 + best_density * 0.30) * overlay_visibility;
+                                let ov_alpha = best_alpha * 0.80 * overlay_visibility;
                                 r = bg.r + (c.r - bg.r) * ov_alpha;
                                 g = bg.g + (c.g - bg.g) * ov_alpha;
                                 b = bg.b + (c.b - bg.b) * ov_alpha;
+                                // Use exact char from source — no density modification
                                 density_idx = best_char_idx;
                                 density = best_density;
 
@@ -422,17 +437,16 @@ impl Model for EditorData {
                             }
                             let _ = density; // used implicitly via density_idx
 
-                            // ── Clamp ALL chars to ASCII range (0–86) by default ──
-                            // Block/box elements (87+) are ONLY allowed during glitch
+                            // ── Chars pass through exactly as source by default ──
                             let mut final_density_idx = density_idx.min(86);
 
-                            // ── Glitch: 1–4% of chars get block elements (bit depth < 11) ──
-                            if glitch_intensity > 0.0 && density_idx > 0 {
+                            // ── Glitch: only 2% of ANY image chars (bit depth < 11) ──
+                            // This is the ONLY way characters get modified from source
+                            if glitch_intensity > 0.0 && final_density_idx > 0 {
                                 let glitch_seed = noise_seed.wrapping_mul(2246822507);
                                 let glitch_roll = ((glitch_seed >> 12) & 0xFF) as f32 / 255.0;
-                                // glitch_intensity 0–0.20 → max 2% of chars affected
-                                if glitch_roll < glitch_intensity * 0.10 {
-                                    // Glitch: pick ANY char from full CHARSET (blocks, box drawing, all of it)
+                                // Hard cap: max 0.2% of chars affected
+                                if glitch_roll < (glitch_intensity * 0.01).min(0.002) {
                                     let block_idx = 1 + ((glitch_seed >> 4) as usize % (CHARSET_LEN - 1));
                                     final_density_idx = block_idx.min(CHARSET_LEN - 1);
                                     let glitch_color = palette.emphasis;
