@@ -120,18 +120,30 @@ impl AsciiImageDisplay {
     fn ensure_font(&self, canvas: &mut Canvas) -> Option<vg::FontId> {
         let cached = *self.font_id.borrow();
         if cached.is_some() { return cached; }
+
+        // Embedded FiraCode — works on all platforms, no install needed
+        static EMBEDDED_FONT: &[u8] = include_bytes!("../assets/FiraCode-Regular.ttf");
+        if let Ok(id) = canvas.add_font_mem(EMBEDDED_FONT) {
+            *self.font_id.borrow_mut() = Some(id);
+            return Some(id);
+        }
+
+        // Fallback: try system fonts
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| std::env::var("USER").map(|u| format!("/Users/{}", u)).unwrap_or_default());
+            .unwrap_or_default();
         for path in &[
+            // macOS
             format!("{}/Library/Fonts/FiraCodeNerdFontMono-Regular.ttf", home),
-            format!("{}/Library/Fonts/FiraCodeNerdFont-Regular.ttf", home),
             format!("{}/Library/Fonts/FiraCode-Regular.ttf", home),
-            "/Users/calmingwaterpad/Library/Fonts/FiraCodeNerdFontMono-Regular.ttf".to_string(),
-            "/Users/calmingwaterpad/Library/Fonts/FiraCode-Regular.ttf".to_string(),
-            "/Library/Fonts/FiraCodeNerdFontMono-Regular.ttf".to_string(),
             "/System/Library/Fonts/Menlo.ttc".to_string(),
-            "/System/Library/Fonts/Monaco.ttf".to_string(),
+            // Windows
+            format!("{}\\AppData\\Local\\Microsoft\\Windows\\Fonts\\FiraCode-Regular.ttf", home),
+            "C:\\Windows\\Fonts\\consola.ttf".to_string(),
+            // Linux
+            "/usr/share/fonts/truetype/firacode/FiraCode-Regular.ttf".to_string(),
+            "/usr/share/fonts/TTF/FiraCode-Regular.ttf".to_string(),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf".to_string(),
         ] {
             if let Ok(id) = canvas.add_font(path) {
                 *self.font_id.borrow_mut() = Some(id);
