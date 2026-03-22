@@ -6,8 +6,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     /// Mock audio buffer for testing
     struct MockAudioBuffer {
         data: Vec<f32>,

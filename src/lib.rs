@@ -3,13 +3,10 @@ use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
 
 mod editor;
-mod editor_view;
-mod ascii_grid_view;
 mod ascii_image_display;
 mod render;
 mod parameter_remapping;
 mod audio_feed;
-mod anim_state;
 pub mod ascii_bank;
 pub use parameter_remapping::*;
 pub use audio_feed::AnimationParams;
@@ -26,6 +23,11 @@ struct Sssssssssampler {
     last_filter_cutoff: f32,
     last_filter_poles: i32,
     audio_feed: audio_feed::AudioFeed,
+    // ── Hardware emulation state ──
+    drift_phase: f32,        // clock drift LFO phase
+    quant_error: [f32; 2],   // noise-shaping error per channel
+    prev_dac: [f32; 2],      // DAC reconstruction previous sample
+    pre_filter: BiquadState, // pre-sampling anti-alias filter
 }
 
 impl Default for Sssssssssampler {
@@ -40,6 +42,10 @@ impl Default for Sssssssssampler {
             last_filter_cutoff: -1.0,
             last_filter_poles: -1,
             audio_feed: audio_feed::AudioFeed::default(),
+            drift_phase: 0.0,
+            quant_error: [0.0; 2],
+            prev_dac: [0.0; 2],
+            pre_filter: BiquadState::new(),
         }
     }
 }
@@ -156,10 +162,14 @@ impl Default for SssssssssamplerParams {
 
 // ─── DSP helpers ─────────────────────────────────────────────────────────────
 
+/// Bit crush with first-order noise shaping (reduces audible quantization noise)
 #[inline]
-fn crush(sample: f32, bits: f32) -> f32 {
+fn crush_shaped(sample: f32, bits: f32, error: &mut f32) -> f32 {
     let levels = (2.0_f32).powf(bits - 1.0);
-    (sample * levels).round() / levels
+    let shaped = sample + *error * 0.5;
+    let quantized = (shaped * levels).round() / levels;
+    *error = sample - quantized;
+    quantized
 }
 
 #[inline]
@@ -203,7 +213,21 @@ impl BiquadState {
         let y = self.b[0] * x + self.z[ch][0];
         self.z[ch][0] = self.b[1] * x - self.a[0] * y + self.z[ch][1];
         self.z[ch][1] = self.b[2] * x - self.a[1] * y;
+        // Guard against NaN/inf from filter instability during rapid param changes
+        if !y.is_finite() {
+            self.z[ch] = [0.0; 2];
+            return x;
+        }
         y
+    }
+
+    /// Process with subtle per-stage op-amp saturation (for cascaded stages 2+)
+    #[inline]
+    fn process_saturated(&mut self, x: f32, ch: usize) -> f32 {
+        let y = self.process(x, ch);
+        let sat = y - y * y * y * 0.02;
+        if !sat.is_finite() { return x; }
+        sat
     }
 
     fn reset(&mut self) { self.z = [[0.0; 2]; 2]; }
@@ -254,10 +278,10 @@ impl FilterState {
     fn process(&mut self, x: f32, ch: usize, poles: i32) -> f32 {
         let y = self.stage1.process(x, ch);
         if poles >= 6 {
-            let y2 = self.stage2.process(y, ch);
-            self.stage3.process(y2, ch)
+            let y2 = self.stage2.process_saturated(y, ch);
+            self.stage3.process_saturated(y2, ch)
         } else if poles >= 4 {
-            self.stage2.process(y, ch)
+            self.stage2.process_saturated(y, ch)
         } else {
             y
         }
@@ -316,6 +340,7 @@ impl Plugin for Sssssssssampler {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         self.sample_rate = buffer_config.sample_rate;
+        self.audio_feed.host_sr = buffer_config.sample_rate;
         true
     }
 
@@ -323,9 +348,13 @@ impl Plugin for Sssssssssampler {
         self.phase = [1.0; 2];
         self.held = [0.0; 2];
         self.filter.reset();
+        self.pre_filter.reset();
         self.last_filter_step = -1.0;
         self.last_filter_cutoff = -1.0;
         self.last_filter_poles = -1;
+        self.drift_phase = 0.0;
+        self.quant_error = [0.0; 2];
+        self.prev_dac = [0.0; 2];
     }
 
     fn process(
@@ -369,20 +398,43 @@ impl Plugin for Sssssssssampler {
                 self.last_filter_cutoff = filter_cutoff;
             }
 
+            // ── Clock drift (slow LFO ~0.3 Hz) ──────────────────────
+            self.drift_phase += 0.3 / host_sr;
+            if self.drift_phase > 1.0 { self.drift_phase -= 1.0; }
+            let drift = (self.drift_phase * std::f32::consts::TAU).sin() * 0.0005;
+
+            // ── Pre-filter update (for steep-filter machines) ────────
+            if poles >= 4 {
+                let pre_fc = (step * 0.8).min(0.99);
+                self.pre_filter.update(pre_fc, 0.7071);
+            }
+
             for (ch, sample) in channel_samples.into_iter().enumerate() {
                 let ch  = ch.min(1);
                 let dry = *sample;
 
-                // ── Sample-and-hold ────────────────────────────────────────
+                // ── Pre-filter (analog input AA stage for steep-filter machines) ──
+                let input = if poles >= 4 {
+                    self.pre_filter.process(dry, ch)
+                } else {
+                    dry // SP-1200/SP-12 style: no pre-filter = aliasing
+                };
+
+                // ── Sample-and-hold with clock drift + jitter ────────
                 if self.phase[ch] >= 1.0 {
                     self.phase[ch] -= 1.0;
-                    self.held[ch] = dry;
+                    self.held[ch] = input;
                 }
-                let jitter_amount = jitter_smooth * step * 0.5 * lcg_rand(&mut rng_state);
-                self.phase[ch] += step + jitter_amount;
+                let jitter_noise = lcg_rand(&mut rng_state);
+                let jitter_amount = jitter_smooth * step * 0.003 * jitter_noise;
+                self.phase[ch] += step * (1.0 + drift) + jitter_amount;
 
-                // ── Bit crush ──────────────────────────────────────────────
-                let mut wet = crush(self.held[ch], bit_depth_smooth);
+                // ── ADC nonlinearity (subtle harmonic distortion) ────
+                let s = self.held[ch];
+                let adc_out = s + s * s * s * 0.02 + s.abs() * s * 0.001;
+
+                // ── Bit crush with noise shaping ─────────────────────
+                let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
 
                 // ── Reconstruction filter ──────────────────────────────────
                 let anti_alias_enabled = self.params.anti_alias.value();
@@ -400,12 +452,17 @@ impl Plugin for Sssssssssampler {
                 }
                 // If anti_alias is OFF and cutoff is 100%, no filter applied (raw aliasing)
 
+                // ── DAC reconstruction (smoothing + transient emphasis) ───
+                let dac_out = 0.7 * wet + 0.3 * self.prev_dac[ch];
+                wet = dac_out + (wet - self.prev_dac[ch]) * 0.1;
+                self.prev_dac[ch] = dac_out;
+
                 // ── Dry/wet ────────────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;
-                *sample = output;
+                *sample = if output.is_finite() { output } else { dry };
 
                 // ── Feed audio analyzer ────────────────────────────────────
-                self.audio_feed.push_sample(output);
+                self.audio_feed.push_sample(output, ch);
             }
         }
 

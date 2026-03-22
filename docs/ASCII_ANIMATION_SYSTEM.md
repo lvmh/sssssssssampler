@@ -1,4 +1,4 @@
-# ASCII Animation System V3
+# ASCII Animation System V4
 
 Visual engine for sssssssssampler — a responsive visual instrument driven by audio and interaction.
 
@@ -23,7 +23,12 @@ Editor Model (editor.rs :: UpdateFrameBuffer)
   ├─ V3: Moment system (FreezeCut, GlitchBloom, LockIn, etc.)
   ├─ V3: Memory system (heat, fatigue, afterimage)
   ├─ V3: Restraint system (idle dampening, recovery windows)
-  └─ Writes FrameBuffer (46×36, RGBA8 + theme colors + preset/theme idx)
+  ├─ V4: Phrase system (8-bar arcs driving overlay/brightness modulation)
+  ├─ V4: Intent model (tension/release/chaos → moment selection)
+  ├─ V4: Anchor-based composition (overlay positioning + collision avoidance)
+  ├─ V4: Coherent glitch field (FBM-style layered noise)
+  ├─ V4: Light mode awareness (is_light flag → inverted emphasis/boost)
+  └─ Writes FrameBuffer (46×36, RGBA8 + theme colors + preset/theme idx + is_light)
          │
          ▼
 Display View (ascii_image_display.rs)
@@ -62,7 +67,7 @@ The entire VST window is the ASCII display — no header, no bottom controls. Al
 
 ## Image Source
 
-All images loaded from **`ascii.txt`** (root directory) using `#N` separator format. Currently **22 images**. Parsed at startup by `AsciiBank::from_ascii_txt()`. Each image stored at **native resolution** — no resizing, no distortion. `get_cell()` returns 0 for out-of-bounds.
+All images loaded from **`ascii.txt`** (root directory) using `#N` separator format. Currently **38 images**. Parsed at startup by `AsciiBank::from_ascii_txt()`. Each image stored at **native resolution** — no resizing, no distortion. `get_cell()` returns 0 for out-of-bounds. Oversized images (wider than 46 cols or taller than 36 rows) are viewported — the scroll/offset system pans across the full image extent. Each image has computed `density` (non-space fraction) and `complexity` (edge transitions) metrics used for biased selection.
 
 ---
 
@@ -73,7 +78,7 @@ All images loaded from **`ascii.txt`** (root directory) using `#N` separator for
 - Random order (hash-based, not sequential)
 - **Scatter-dissolve transition** over half a bar with wave bias
 - Random starting tick (system time seed per session)
-- Can drift partially off-screen (**minimum 30% visible**)
+- Can drift partially off-screen (**minimum 45% visible**)
 
 ### Overlay Slots (4 independent)
 
@@ -101,7 +106,7 @@ One moment active at a time. Each has duration + cooldown.
 | Moment | Trigger | Effect | Duration |
 |--------|---------|--------|----------|
 | **FreezeCut** | Transient + energy > 0.8 | Freeze velocity/motion, +10% brightness, dust continues | 5–20 frames |
-| **GlitchBloom** | Transient + energy > 0.6 | Expanding glitch radius from seed cell (block/box chars) | 15–25 frames |
+| **GlitchBloom** | Transient + energy > 0.6 | Expanding glitch radius from seed cell (block/box chars) in `palette.primary` color | 15–25 frames |
 | **LockIn** | Entering PEAK state | Overlays use same image as core (alignment moment) | 2 beats |
 | **PhaseWave** | Energy > 0.7 (rare) | Horizontal sine displacement on core | 20–35 frames |
 | **Collapse** | Exiting PEAK state | Coherent noise progressively removes cells | 25 frames |
@@ -130,6 +135,149 @@ afterimage = lerp(afterimage, energy, 0.1)     // drives smearing + trail persis
 - **Idle windows**: when energy < 0.25 and no active moment → dampen to 40% intensity
 - **Recovery windows**: after moment ends (cooldown > 15 frames) → dampen to 60%
 - **Fatigue**: reduces glitch probability after heavy activity (multiplier 0.2–1.0)
+
+---
+
+## V4: Phrase System
+
+8-bar arcs driving modulation across overlays and brightness:
+
+```
+phrase_arc = sin(t / (ticks_per_bar * 8) × π)   // 0→1→0 over 8 bars
+phrase_overlay_mod = 0.7 + phrase_arc × 0.3      // overlay alpha scaling
+phrase_brightness_mod = 0.9 + phrase_arc × 0.1   // brightness pulsing
+```
+
+---
+
+## V4: Intent Model
+
+Three accumulating intent signals derived from audio energy trends:
+
+```
+intent_tension  += when energy rising steadily       × 0.95 decay
+intent_release  += when energy dropping               × 0.95 decay
+intent_chaos    += when energy erratic (high delta)   × 0.95 decay
+```
+
+The dominant intent biases moment selection:
+- **Tension** → FreezeCut, LockIn
+- **Release** → Afterglow, Collapse
+- **Chaos** → GlitchBloom, PhaseWave
+
+---
+
+## V4: Anchor-Based Composition
+
+Overlay positions are anchor-driven with role-specific pull rates and soft collision avoidance:
+
+- 10 predefined anchor points across the grid
+- Overlays drift toward their anchor with slot-specific pull (0.02–0.08)
+- Collision avoidance pushes overlapping overlays apart
+- Accent overlay retargets on transients
+
+---
+
+## V4: Coherent Glitch Field
+
+Replaces per-cell random glitch with FBM-style layered noise for spatially coherent corruption:
+
+```
+glitch_field(col, row, phase) = 3 octaves of hash noise
+  octave 1: scale 0.15, weight 0.5
+  octave 2: scale 0.3,  weight 0.3
+  octave 3: scale 0.6,  weight 0.2
+```
+
+---
+
+## V4: Light Mode Rendering
+
+`ColorPalette.is_light` computed from background luminance (> 0.18 linear). Adjustments:
+
+| Effect | Dark Theme | Light Theme |
+|--------|-----------|-------------|
+| Brightness boost (FreezeCut, UserAccent) | Additive (+) | Subtractive (−) darkens for emphasis |
+| Structural alpha floor | 0.15 | 0.35 |
+| Dust opacity | base range | ×1.6 multiplier |
+| Glitch corruption alpha | 0.15 + energy×0.2 | 0.30 + energy×0.35 |
+| UI highlight | +40 RGB | −40 RGB |
+
+---
+
+## V5: Per-Preset Visual Profiles
+
+Each sampler preset defines a `VisualProfile` controlling 14 parameters that make presets visually identifiable:
+
+| Parameter | Controls | Range Across Presets |
+|-----------|----------|---------------------|
+| `row_damping` | Core vertical velocity drag | 0.85 (loose) → 0.95 (stable) |
+| `col_damping` | Core horizontal velocity drag | 0.82 (loose) → 0.94 (stable) |
+| `bpm_force` | BPM rhythmic push amplitude | 0.20 (gentle) → 0.45 (strong) |
+| `dust_density` | Base dust particle density | 0.46 (clean) → 0.74 (gritty) |
+| `glitch_mult` | Glitch probability multiplier | 0.15 (near-zero) → 1.65 (heavy) |
+| `step_quant_mult` | SR temporal stepping scale | 0.7 (smooth) → 1.5 (coarse) |
+| `smear_base` | Smear/trail base amount | 0.2 (crisp) → 0.4 (ghostly) |
+| `transition_speed` | Image transition window (bars) | 0.3 (fast cuts) → 0.7 (slow fades) |
+| `overlay_speed` | Overlay cycling speed mult | 0.8 (slow) → 1.4 (fast) |
+| `micro_freeze_thresh` | Micro-freeze probability | 5 (rare) → 20 (frequent) |
+| `moment_mult` | Moment trigger probability mult | 0.6 (rare) → 1.4 (frequent) |
+| `dust_style` | 0=random, 1=grid, 2=chaotic | Per-preset character |
+| `glitch_style` | 0=mixed, 1=h-line, 2=warped, 3=minimal | Per-preset character |
+| `bloom_shape` | 0=rect, 1=scanline, 2=radial, 3=jagged | Per-preset character |
+
+Profiles interpolate smoothly (~300ms) when switching presets.
+
+---
+
+## V5: Visual Enhancement Details
+
+### Dust Styles
+- **Grid-aligned** (SP-1200): structured digital stepping using quantized cell positions
+- **Chaotic drift** (Mirage): heavy wave-based drift with irregular patterns
+- **Random** (default): existing wave_mix oscillation between random scatter and structured waves
+
+### Glitch Styles
+- **Horizontal-line** (SP-1200, SP-303): only block elements (indices 94-105) for scanline aesthetic
+- **Warped-melt** (Mirage): wide character range including digits + blocks for melted look
+- **Minimal** (S950, MPC3000): only light chars + thin blocks for subtle artifacts
+- **Mixed** (default): full CHARSET range
+
+### GlitchBloom Shapes
+- **Scanline** (SP-1200): horizontal line burst (±1 row, ±2× radius columns)
+- **Radial** (S950, P-2000): circular expansion using distance check
+- **Jagged** (Mirage): irregular per-row radius variation
+- **Rectangle** (default): existing square expansion
+
+### Afterglow Accent Tint
+When Afterglow is active, color subtly drifts toward `palette.emphasis` (the themed accent). Fades exponentially as the afterglow decays. Produces gold afterglow on Rooney, lime on Noni, teal on Kerama.
+
+### Transient Emphasis Flash
+Transient hits produce a brief accent-colored flash (10% tint toward `palette.emphasis`) in addition to brightness boost. Makes transients feel themed.
+
+### Phrase-Coupled Color Drift
+Color drift amplitude scales with phrase arc: 0.02 at phrase valleys (settled), 0.08 at peaks (active). Makes the visual "breathe" musically over 8-bar phrases.
+
+### Signal-Class Transition Sharpness
+- **Percussive**: 4× transition speed (hard cuts — impact-driven)
+- **Ambient**: 0.5× transition speed (soft ghostly merges)
+- **Tonal**: 1× (normal dissolve)
+
+---
+
+## V5: Global Polish
+
+### Visual Filter Remap
+Filter parameter (0-1) is perceptually remapped for the visual system only (audio DSP unchanged):
+- 0.0-0.3 → 0.0-0.5 (dramatic fragmentation range, compressed)
+- 0.3-0.7 → 0.5-0.85 (musical sweet spot, expanded)
+- 0.7-1.0 → 0.85-1.0 (subtle refinement, compressed)
+
+### Global Restraint
+- Damping nudged +2% toward 1.0 (slightly more stable globally)
+- Dust density reduced ~0.04 across all profiles
+- Glitch multipliers reduced ~15% across all profiles
+- Produces "held back" feel rather than overwhelming
 
 ---
 
@@ -173,7 +321,7 @@ Per-cell coherent noise compared to filter threshold. Affects **both core and ov
 
 ```
 coherent_noise = center × 0.6 + avg(4 neighbors) × 0.4
-if coherent_noise > filter_val: alpha = 0.15 (dimmed)
+if coherent_noise > filter_val: alpha = 0.15 (dark themes) / 0.35 (light themes)
 else: alpha = 1.0 (full)
 ```
 
@@ -199,9 +347,10 @@ else: alpha = 1.0 (full)
 2. **Overlay Images** — full grid, filter + structural alpha applied, scatter-dissolve transitions
 3. **Core Image** — on top, velocity-based scroll, min 30% on-screen, wave-biased dissolve
 4. **Dust** — always animating, energy-coupled density (0.66 + energy × 0.2)
-5. **Glitch** — bit depth < 12 only, fatigue-scaled probability, full CHARSET
+5. **Glitch** — bit depth < 12 only, fatigue-scaled probability, V4 coherent glitch field
 6. **V3 Moments** — GlitchBloom overlay, Collapse cell removal, brightness boosts
-7. **V3 Restraint** — idle/recovery dampening applied last
+7. **V4 Phrase + Light mode** — brightness boost (additive on dark, subtractive on light)
+8. **V3 Restraint** — idle/recovery dampening applied last
 8. **UI Overlay** — femtovg text rendered AFTER grid (never in framebuffer, never affected by animation)
 
 ---
@@ -233,7 +382,9 @@ Row 7: < S950 >          (click left=prev, right=next)
 Row 8: bits: 12.0        (click-drag)
 Row 9: jitter: 1.0%      (click-drag)
 Row 10: mix: 100%        (click-drag)
-Row 11: theme: noni dark (click to cycle)
+Row 11: theme: noni      (click to cycle 14 themes)
+Row 12: mode: dark       (click to toggle dark/light)
+Row 13: feel: expressive (click to cycle tight/expressive/chaotic)
 ```
 
 ### Interaction
@@ -247,44 +398,58 @@ Row 11: theme: noni dark (click to cycle)
 - Cursor captured and locked during drag
 
 ### Theme colors in FrameBuffer
-`FrameBuffer` carries `primary_rgb`, `emphasis_rgb`, `preset_idx`, `theme_idx` so the display can render UI text in the correct theme colors without needing access to the palette.
+`FrameBuffer` carries `primary_rgb`, `emphasis_rgb`, `preset_idx`, `theme_idx` (0-13), `dark_mode`, `feel_idx`, `energy`, and `is_light` so the display can render UI text in the correct theme colors and adapt highlight direction without needing access to the palette.
 
 ---
 
-## CHARSET (131 chars)
+## CHARSET (124 chars)
 
 ```
 0–83:    Standard ASCII (artwork-safe, exact match preserved)
 84–86:   Additional ASCII from sources: " m 8
 87–93:   Missing digits: 2 3 4 5 6 7 9
-94–114:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
-115–130: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬)
+94–105:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
+106–123: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬)
 ```
 
 ---
 
-## Themes (5)
+## Themes (14 × light/dark)
 
-| Name | Background | Primary | Mood |
-|------|-----------|---------|------|
-| Noni Dark (default) | `#151805` | `#9BB940` | Deep forest lime |
-| Noni Light | `#F1F3EA` | `#6D8000` | Sage daylight |
-| Paris | `#140813` | `#FF5FFF` | Midnight hot pink + gold |
-| Rooney | `#140001` | `#FC000B` | Man Utd red + gold |
-| Brazil Light | `#F4FAF4` | `#007500` | Forest teal + gold |
+Ported from the Coconut Creme design system. Each theme has independent light and dark mode variants. Theme and mode are separate controls in the UI.
+
+| # | Name | Primary Hue | Accent Hue | Mood |
+|---|------|-------------|------------|------|
+| 0 | Pink | 340 (pink) | 355 (rose) | Warm, confident |
+| 1 | Kerama | 250 (cobalt) | 195 (teal) | Deep ocean |
+| 2 | Brazil | 145 (green) | 95 (yellow) | Flag, tropical |
+| 3 | **Noni** (default) | 118 (olive) | 122 (lime) | Earthy, fresh |
+| 4 | Paris | 328 (fuchsia) | 72 (gold) | Glamour, loud |
+| 5 | Rooney | 22 (red) | 78 (gold) | Football, bold |
+| 6 | k+k | 260 (gray) | 260 (gray) | Minimalist |
+| 7 | Catppuccin | 300 (mauve) | 265 (lavender) | Pastel, cozy |
+| 8 | Kanagawa | 222 (wave blue) | 80 (amber) | Ukiyo-e, inky |
+| 9 | Rosé Pine | 0 (rose) | 300 (iris) | Romantic, muted |
+| 10 | Dracula | 295 (purple) | 340 (pink) | Syntax, vivid |
+| 11 | Papaya | 50 (orange) | 45 (orange) | Motorsport |
+| 12 | Dominican | 264 (royal blue) | 22 (red) | Baseball, patriotic |
+| 13 | Calsonic | 260 (ocean blue) | 18 (coral) | JDM racing |
+
+**Emphasis/flash color** is set to each theme's accent color (not generic white/black), so glitch corruption carries the theme identity.
 
 ---
 
-## Machine Presets (6)
+## Machine Presets (7)
 
-| Name | Sample Rate | Bit Depth | Poles | Character |
-|------|------------|-----------|-------|-----------|
-| SP-1200 | 26,040 Hz | 12-bit | 2-pole | Gritty, under-filtered |
-| SP-12 | 27,500 Hz | 12-bit | 2-pole | Gritty |
-| S612 | 32,000 Hz | 12-bit | 4-pole | Clean 4th-order |
-| SP-303 | 44,100 Hz | 16-bit | 4-pole | Clean hi-fi |
-| S950 (default) | 48,000 Hz | 12-bit | 6-pole | 36 dB/oct switched-cap |
-| MPC3000 | 44,100 Hz | 16-bit | 4-pole | Transparent |
+| Name | Sample Rate | Bit Depth | Poles | Character | Hardware Evidence |
+|------|------------|-----------|-------|-----------|-------------------|
+| SP-1200 (default) | 26,040 Hz | 12-bit | 2-pole | Gritty, aliasing, punchy | AD7541 DAC, SSM2044 VCF |
+| MPC60 | 40,000 Hz | 12-bit | 4-pole | Clean 12-bit, punch | Burr Brown PCM54HP DAC |
+| S950 | 48,000 Hz | 12-bit | 6-pole | Smooth, warm | MF6CN-50 36 dB/oct |
+| Mirage | 33,000 Hz | 8-bit | 4-pole | 8-bit gritty, warm | CEM3328 resonant filter |
+| P-2000 | 41,667 Hz | 12-bit | 4-pole | Analog filter sweeps | CEM3379 resonant VCF |
+| MPC3000 | 44,100 Hz | 16-bit | 4-pole | Clean reference | PCM69A 18-bit DAC |
+| SP-303 | 44,100 Hz | 16-bit | 4-pole | Clean + digital FX | COSM DSP |
 
 ---
 
@@ -309,7 +474,19 @@ prev_energy_state: u8
 prev_filter: f32
 prev_sr: f32
 glitch_events_this_frame: u32
-ui_expanded: bool
+
+// V4: Phrase, Intent, Composition
+phrase_tick: f32
+intent_tension: f32
+intent_release: f32
+intent_chaos: f32
+core_pos: (f32, f32)
+core_anchor: (f32, f32)
+overlay_anchors: [(f32, f32); 4]
+overlay_positions: [(f32, f32); 4]
+accent_slot_alpha: f32
+glitch_field_phase: f32
+recent_moment_count: u32
 ```
 
 ---
@@ -318,12 +495,13 @@ ui_expanded: bool
 
 | File | Purpose |
 |------|---------|
-| `ascii.txt` | All ASCII art images (`#N` separated) |
-| `src/editor.rs` | Animation loop, compositing, moments, memory, restraint |
+| `ascii.txt` | All 38 ASCII art images (`#N` separated) |
+| `src/editor.rs` | Animation loop, compositing, moments, memory, phrase, intent, anchors |
 | `src/ascii_image_display.rs` | femtovg rendering, UI overlay, mouse interaction |
-| `src/ascii_bank.rs` | CHARSET (131 chars), image parsing |
+| `src/ascii_bank.rs` | CHARSET (124 chars), image parsing, density/complexity metrics |
 | `src/audio_feed.rs` | AnimationParams (energy, transient, BPM, playing) |
-| `src/render/color_system.rs` | ColorPalette (5 themes) |
-| `src/render/offscreen.rs` | FrameBuffer struct (pixels + theme colors + indices) |
+| `src/render/color_system.rs` | ColorPalette (14 themes × light/dark, is_light flag, themed emphasis) |
+| `src/render/offscreen.rs` | FrameBuffer struct (pixels + theme colors + indices + is_light) |
 | `src/render/audio_analysis.rs` | AudioAnalyzer (RMS, transient detection) |
+| `src/render/layer_engine.rs` | Layer state management (anchor layer + 4 overlays) |
 | `src/lib.rs` | DSP: sample-and-hold, bit crush, 2/4/6-pole filter, params |

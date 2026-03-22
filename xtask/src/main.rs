@@ -1,3 +1,3 @@
 fn main() {
-    nih_plug_xtask::main();
+    let _ = nih_plug_xtask::main();
 }
