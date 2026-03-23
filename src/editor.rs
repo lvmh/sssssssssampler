@@ -1906,6 +1906,18 @@ impl Model for EditorData {
                             g = (g + sg).clamp(0.0, 1.0);
                             b = (b + sb).clamp(0.0, 1.0);
 
+                            // V5: Subtle per-cell flicker (step 20 — after signature, before gamma)
+                            if energy > 0.05 {
+                                let fh = col.wrapping_mul(2246822507)
+                                    .wrapping_add(row.wrapping_mul(1664525))
+                                    .wrapping_add(self.anim_tick as u32 * 6364136);
+                                let flicker = ((fh >> 16) & 0xFF) as f32 / 255.0 - 0.5; // -0.5 to +0.5
+                                let amt = flicker * energy * 0.016; // ±0.008 linear (~±2 RGB/255)
+                                r = (r + amt).clamp(0.0, 1.0);
+                                g = (g + amt * 0.96).clamp(0.0, 1.0);
+                                b = (b + amt * 1.04).clamp(0.0, 1.0);
+                            }
+
                             // ── V6: AA OFF → harsher structural alpha floors ──
                             // (Already handled via structural_alpha above, but nudge dust)
 
