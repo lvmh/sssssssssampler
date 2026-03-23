@@ -810,9 +810,10 @@ impl Model for EditorData {
                     let ticks_per_beat = 60.0 * 60.0 / bpm;
                     let ticks_per_bar = ticks_per_beat * 4.0;
 
+                    let bars_this_frame = if playing { 1.0 / ticks_per_bar.max(1.0) } else { 0.0 };  // V5: hoisted for Intent Mode
+
                     // ── V4: Phrase system ──
                     if playing {
-                        let bars_this_frame = 1.0 / ticks_per_bar.max(1.0);
                         let bpm_delta = (bpm - self.prev_bpm).abs() / bpm.max(1.0);
                         if bpm_delta < 0.02 {
                             self.bpm_stable_bars += bars_this_frame;
@@ -1253,6 +1254,38 @@ impl Model for EditorData {
                         + self.recent_moment_count as f32 * 0.15;
                     self.intent_chaos += (chaos_signal - self.intent_chaos) * 0.08;
                     self.intent_chaos = self.intent_chaos.clamp(0.0, 1.0);
+
+                    // V5: Intent → Rendering Modes — state update
+                    // (Physics effects applied earlier via self.intent_mode_t from previous frame — see pre-physics block)
+                    {
+                        let dominant_intent = self.intent_tension.max(self.intent_chaos).max(self.intent_release);
+                        let new_mode: u8 = if dominant_intent < 0.30 { 0 }
+                            else if self.intent_tension >= self.intent_chaos && self.intent_tension >= self.intent_release { 1 }
+                            else if self.intent_chaos >= self.intent_release { 2 }
+                            else { 3 };
+                        if new_mode == self.intent_mode && new_mode != 0 {
+                            self.intent_mode_bars += bars_this_frame;
+                        } else {
+                            self.intent_mode = new_mode;
+                            self.intent_mode_bars = 0.0;
+                        }
+                        let target_t = if self.intent_mode_bars >= 2.0 { 1.0f32 } else { 0.0 };
+                        let t_rate = if target_t > self.intent_mode_t { 0.08 } else { 0.12 };
+                        self.intent_mode_t += (target_t - self.intent_mode_t) * t_rate;
+                        // Intent_mode_t is written for next frame's pre-physics block
+
+                        // Apply Chaos warp boost to self.intent_chaos (feeds into warp_offset this frame via per-cell loop)
+                        if self.intent_mode == 2 {
+                            self.intent_chaos = (self.intent_chaos + 0.08 * self.intent_mode_t).clamp(0.0, 1.0);
+                        }
+
+                        // Release mode: apply to effective_smear and overlay_visibility (declared before this block)
+                        if self.intent_mode == 3 {
+                            let imt = self.intent_mode_t;
+                            effective_smear = (effective_smear + 0.10 * imt).min(0.8);
+                            overlay_visibility *= 1.0 - 0.08 * imt;
+                        }
+                    }
 
                     // Trigger new moments
                     if self.moment.active.is_none() && self.moment.cooldown == 0 {
