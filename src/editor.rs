@@ -253,6 +253,122 @@ fn select_biased_image(bank: &crate::ascii_bank::AsciiBank, hash: u32, preferred
     best_idx
 }
 
+/// V5: Global field warp — returns (wx, wy) coordinate displacement
+fn warp_offset(col: u32, row: u32, phase: f32, chaos: f32, energy: f32) -> (i32, i32) {
+    let hash_noise = |cx: f32, cy: f32, seed: u32| -> f32 {
+        let ix = cx as i32 as u32;
+        let iy = cy as i32 as u32;
+        let s = ix.wrapping_mul(2246822507)
+            .wrapping_add(iy.wrapping_mul(1664525))
+            .wrapping_add(seed);
+        ((s >> 16) & 0xFF) as f32 / 255.0
+    };
+    let intensity = (energy * 0.12 + chaos * 0.08).clamp(0.0, 0.20);
+    let warp_x = (row as f32 * 0.2 + phase).sin() * intensity;
+    let oct1 = (hash_noise((col / 8) as f32, (row / 8) as f32, 7331) - 0.5) * 0.6;
+    let oct2 = (hash_noise((col / 4) as f32, (row / 4) as f32, 8629) - 0.5) * 0.4;
+    let warp_y = (oct1 + oct2) * intensity;
+    let wx = warp_x.round() as i32;
+    let wy = warp_y.round() as i32;
+    (wx.clamp(-2, 2), wy.clamp(-2, 2))
+}
+
+/// V5: Edge-aware brightness — detects edge vs interior cells via neighbor sampling
+fn edge_brightness_delta(bank: &crate::ascii_bank::AsciiBank, img_idx: usize, col: usize, row: usize) -> f32 {
+    if bank.get_cell(img_idx, col, row) == 0 { return 0.0; }
+    let n = (bank.get_cell(img_idx, col, row.wrapping_sub(1)) > 0) as u32;
+    let s = (bank.get_cell(img_idx, col, row + 1) > 0) as u32;
+    let e = (bank.get_cell(img_idx, col + 1, row) > 0) as u32;
+    let w = (bank.get_cell(img_idx, col.wrapping_sub(1), row) > 0) as u32;
+    let filled = n + s + e + w;
+    match filled {
+        4 => -0.04,  // interior
+        3 => 0.0,    // neutral
+        _ => 0.07,   // edge (0, 1, or 2 filled neighbors)
+    }
+}
+
+/// V5: Per-preset signature tick — returns (dr, dg, db) linear color delta
+fn signature_tick(
+    preset_idx: usize,
+    col: u32,
+    row: u32,
+    energy: f32,
+    sig_param: f32,
+    dust_tick: u32,
+    warp_phase: f32,
+    transient: bool,
+    anim_tick: u64,
+) -> (f32, f32, f32) {
+    if sig_param < 0.01 { return (0.0, 0.0, 0.0); }
+    match preset_idx {
+        0 => {
+            // SP-1200: horizontal tearing bands
+            let band = row / 3;
+            let seed = band.wrapping_mul(2246822507).wrapping_add(dust_tick / 30);
+            let tear_roll = ((seed >> 16) & 0xFF) as f32 / 255.0;
+            if tear_roll < sig_param * 0.08 * energy {
+                (0.04, 0.0, -0.02)
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        }
+        1 => (0.0, 0.0, 0.0), // MPC60: snap handled in velocity block
+        2 => {
+            // S950: rare symmetric bloom (period = 2s at 60fps)
+            let period = anim_tick / 120;
+            let bloom_hash = period.wrapping_mul(2654435761);
+            let bloom_roll = ((bloom_hash >> 16) & 0xFF) as f32 / 255.0;
+            if bloom_roll < sig_param * 0.05 {
+                let dist2 = (col as f32 - 27.0).powi(2) + (row as f32 - 21.0).powi(2);
+                if dist2 < 9.0 {
+                    let dist = dist2.sqrt();
+                    let flash = (1.0 - dist / 3.0) * sig_param * 0.20 * energy;
+                    (flash, flash, flash)
+                } else {
+                    (0.0, 0.0, 0.0)
+                }
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        }
+        3 => {
+            // Mirage: vertical melt shimmer (blue-tinted)
+            let melt = (col as f32 * 0.3 + warp_phase * 0.5).sin() * sig_param * 0.06 * energy;
+            (0.0, melt * 0.5, melt)
+        }
+        4 => {
+            // P-2000: analog wave drift
+            let wave = (col as f32 * 0.05 + warp_phase * 0.3).sin() * sig_param * 0.04 * energy;
+            (-wave * 0.3, 0.0, wave)
+        }
+        5 => {
+            // MPC3000: sharp transient flash
+            if transient {
+                let flash = sig_param * 0.15 * energy;
+                (flash, flash, flash)
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        }
+        6 => {
+            // SP-303: attack-driven block flicker
+            let block_h = col / 6;
+            let block_v = row / 4;
+            let flicker_hash = block_h.wrapping_mul(31337)
+                .wrapping_add(block_v.wrapping_mul(7919))
+                .wrapping_add(dust_tick / 8);
+            if transient && ((flicker_hash >> 16) & 0xFF) < (sig_param * energy * 50.0) as u32 {
+                let fl = sig_param * energy * 0.12;
+                (fl, fl * 0.7, fl * 0.5)
+            } else {
+                (0.0, 0.0, 0.0)
+            }
+        }
+        _ => (0.0, 0.0, 0.0),
+    }
+}
+
 /// V4: Get anchors for a composition mode
 fn get_composition_anchors(mode: u8) -> [(f32, f32); 5] {
     // Returns [core, pulse, accent, drift, ghost]
