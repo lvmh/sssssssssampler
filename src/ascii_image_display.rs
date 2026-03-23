@@ -297,7 +297,16 @@ impl AsciiImageDisplay {
     fn render_ui_overlay(&self, canvas: &mut Canvas, fid: vg::FontId, fb: &FrameBuffer,
                           cell_w: f32, cell_h: f32, offset_x: f32, offset_y: f32) {
         let menu_vis = *self.menu_visible.borrow();
-        let hover = *self.hover_row.borrow();
+        let drag_row = self.drag.borrow().as_ref().map(|d| match d.row {
+            UiRow::SampleRate => ROW_SR,
+            UiRow::Filter    => ROW_FILTER,
+            UiRow::BitDepth  => ROW_BITS,
+            UiRow::Jitter    => ROW_JITTER,
+            UiRow::Mix       => ROW_MIX,
+            _                => usize::MAX,
+        });
+        // While dragging: lock highlight to the dragged row, suppress all other hover effects.
+        let hover = drag_row.map(Some).unwrap_or(*self.hover_row.borrow());
         let font_size = (cell_h * 0.85).max(6.0);
 
         let frame = *self.frame_count.borrow();
