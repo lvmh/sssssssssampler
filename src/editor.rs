@@ -82,6 +82,8 @@ pub(crate) struct VisualProfile {
     scanline_amt: f32,  // 0.0–1.0: scanline visibility at low SR
     motion_echo: f32,   // 0.0–0.5: velocity trail intensity
     moment_bias: [f32; 6], // [FreezeCut, GlitchBloom, LockIn, PhaseWave, Collapse, Afterglow]
+    // ── V5 (new) ──
+    sig_param: f32,   // signature effect intensity (0.0 = off)
 }
 
 const VISUAL_PROFILES: &[VisualProfile] = &[
@@ -90,43 +92,50 @@ const VISUAL_PROFILES: &[VisualProfile] = &[
         glitch_mult: 1.35, step_quant_mult: 1.3, smear_base: 0.2, transition_speed: 0.3,
         overlay_speed: 1.3, micro_freeze_thresh: 18, moment_mult: 1.3,
         dust_style: 1, glitch_style: 1, bloom_shape: 1,
-        scanline_amt: 0.6, motion_echo: 0.15, moment_bias: [1.5, 1.3, 0.8, 0.7, 1.0, 1.0] },
+        scanline_amt: 0.6, motion_echo: 0.15, moment_bias: [1.5, 1.3, 0.8, 0.7, 1.0, 1.0],
+        sig_param: 0.7 },
     // MPC60: rhythmic, transient-driven — standard dust/glitch/bloom
     VisualProfile { row_damping: 0.90, col_damping: 0.88, bpm_force: 0.40, dust_density: 0.56,
         glitch_mult: 0.55, step_quant_mult: 1.1, smear_base: 0.25, transition_speed: 0.4,
         overlay_speed: 1.1, micro_freeze_thresh: 14, moment_mult: 1.1,
         dust_style: 0, glitch_style: 0, bloom_shape: 0,
-        scanline_amt: 0.3, motion_echo: 0.2, moment_bias: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] },
+        scanline_amt: 0.3, motion_echo: 0.2, moment_bias: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        sig_param: 0.5 },
     // S950: smooth, warm, flowing — minimal glitch, radial bloom
     VisualProfile { row_damping: 0.94, col_damping: 0.93, bpm_force: 0.25, dust_density: 0.56,
         glitch_mult: 0.35, step_quant_mult: 0.8, smear_base: 0.35, transition_speed: 0.6,
         overlay_speed: 0.9, micro_freeze_thresh: 8, moment_mult: 0.8,
         dust_style: 0, glitch_style: 3, bloom_shape: 2,
-        scanline_amt: 0.2, motion_echo: 0.3, moment_bias: [0.8, 0.5, 1.3, 0.7, 0.8, 1.2] },
+        scanline_amt: 0.2, motion_echo: 0.3, moment_bias: [0.8, 0.5, 1.3, 0.7, 0.8, 1.2],
+        sig_param: 0.4 },
     // Mirage: chaotic, unstable, warped — chaotic dust, warped glitch, jagged bloom
     VisualProfile { row_damping: 0.85, col_damping: 0.82, bpm_force: 0.35, dust_density: 0.74,
         glitch_mult: 1.65, step_quant_mult: 1.5, smear_base: 0.4, transition_speed: 0.35,
         overlay_speed: 1.4, micro_freeze_thresh: 20, moment_mult: 1.4,
         dust_style: 2, glitch_style: 2, bloom_shape: 3,
-        scanline_amt: 0.4, motion_echo: 0.35, moment_bias: [0.8, 1.5, 0.6, 1.8, 1.2, 0.8] },
+        scanline_amt: 0.4, motion_echo: 0.35, moment_bias: [0.8, 1.5, 0.6, 1.8, 1.2, 0.8],
+        sig_param: 0.8 },
     // Prophet 2000: elastic, expressive — standard dust, mixed glitch, radial bloom
     VisualProfile { row_damping: 0.93, col_damping: 0.91, bpm_force: 0.30, dust_density: 0.51,
         glitch_mult: 0.45, step_quant_mult: 0.9, smear_base: 0.35, transition_speed: 0.7,
         overlay_speed: 1.0, micro_freeze_thresh: 10, moment_mult: 0.9,
         dust_style: 0, glitch_style: 0, bloom_shape: 2,
-        scanline_amt: 0.25, motion_echo: 0.25, moment_bias: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] },
+        scanline_amt: 0.25, motion_echo: 0.25, moment_bias: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        sig_param: 0.5 },
     // MPC3000: clean, stable, precise — minimal everything
     VisualProfile { row_damping: 0.95, col_damping: 0.94, bpm_force: 0.20, dust_density: 0.46,
         glitch_mult: 0.15, step_quant_mult: 0.7, smear_base: 0.25, transition_speed: 0.5,
         overlay_speed: 0.8, micro_freeze_thresh: 5, moment_mult: 0.6,
         dust_style: 0, glitch_style: 3, bloom_shape: 0,
-        scanline_amt: 0.15, motion_echo: 0.1, moment_bias: [0.6, 0.6, 1.5, 0.5, 0.6, 1.0] },
+        scanline_amt: 0.15, motion_echo: 0.1, moment_bias: [0.6, 0.6, 1.5, 0.5, 0.6, 1.0],
+        sig_param: 0.6 },
     // SP-303: effect-driven, rhythmic — h-line glitch, standard bloom
     VisualProfile { row_damping: 0.91, col_damping: 0.89, bpm_force: 0.35, dust_density: 0.54,
         glitch_mult: 1.05, step_quant_mult: 1.0, smear_base: 0.30, transition_speed: 0.4,
         overlay_speed: 1.2, micro_freeze_thresh: 15, moment_mult: 1.1,
         dust_style: 0, glitch_style: 1, bloom_shape: 0,
-        scanline_amt: 0.5, motion_echo: 0.2, moment_bias: [1.0, 1.2, 0.9, 1.0, 1.0, 1.0] },
+        scanline_amt: 0.5, motion_echo: 0.2, moment_bias: [1.0, 1.2, 0.9, 1.0, 1.0, 1.0],
+        sig_param: 0.7 },
 ];
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -538,6 +547,7 @@ impl Model for EditorData {
                         vp.scanline_amt += (vp_target.scanline_amt - vp.scanline_amt) * vr;
                         vp.motion_echo += (vp_target.motion_echo - vp.motion_echo) * vr;
                         for i in 0..6 { vp.moment_bias[i] += (vp_target.moment_bias[i] - vp.moment_bias[i]) * vr; }
+                        vp.sig_param += (vp_target.sig_param - vp.sig_param) * vr;
                         // Global polish: nudge damping toward 1.0 (+5% restraint)
                         vp.row_damping = vp.row_damping * 0.98 + 0.02;
                         vp.col_damping = vp.col_damping * 0.98 + 0.02;
