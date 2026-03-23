@@ -968,6 +968,11 @@ impl Model for EditorData {
                         self.velocity_col *= self.visual_profile.col_damping;
                         self.velocity_col = self.velocity_col.clamp(-4.0, 4.0);
                     }
+                    // V5: MPC60 grid snap (preset_idx 1 = MPC60, see PRESETS array)
+                    if self.preset_idx == 1 {
+                        self.velocity_row = (self.velocity_row * 2.0).round() / 2.0;
+                        self.velocity_col = (self.velocity_col * 2.0).round() / 2.0;
+                    }
                     // V5: Hero Lock extra velocity damping + symmetric anchor snap
                     if hero_lock {
                         self.velocity_row *= 0.85;
@@ -1890,6 +1895,16 @@ impl Model for EditorData {
                                     b = palette.background.b;
                                 }
                             }
+
+                            // V5: Per-preset signature behaviors (step 19)
+                            let (sr, sg, sb) = signature_tick(
+                                self.preset_idx, col, row, energy,
+                                self.visual_profile.sig_param,
+                                dust_tick, self.warp_phase, transient, self.anim_tick,
+                            );
+                            r = (r + sr).clamp(0.0, 1.0);
+                            g = (g + sg).clamp(0.0, 1.0);
+                            b = (b + sb).clamp(0.0, 1.0);
 
                             // ── V6: AA OFF → harsher structural alpha floors ──
                             // (Already handled via structural_alpha above, but nudge dust)
