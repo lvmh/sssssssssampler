@@ -800,7 +800,7 @@ impl Model for EditorData {
                     let smear_factor = sr_effect * self.visual_profile.smear_base;
                     // V3: Effective smear includes afterglow + memory afterimage
                     let afterglow_smear_early = if matches!(self.moment.active, Some(Moment::Afterglow)) { 0.5 } else { 0.0 };
-                    let effective_smear = (smear_factor * self.smear_scale + afterglow_smear_early + self.memory.afterimage * 0.15).min(0.8);
+                    let mut effective_smear = (smear_factor * self.smear_scale + afterglow_smear_early + self.memory.afterimage * 0.15).min(0.8);
 
                     // ── BPM timing ──
                     let bpm = anim_params.bpm.clamp(40.0, 200.0);
@@ -1061,7 +1061,7 @@ impl Model for EditorData {
                     let lockin_active = matches!(self.moment.active, Some(Moment::LockIn));
                     let overlay_recovery = self.moment_recovery_timer > 0;
 
-                    let slots: [OverlaySlot; NUM_SLOTS] = std::array::from_fn(|i| {
+                    let mut slots: [OverlaySlot; NUM_SLOTS] = std::array::from_fn(|i| {
                         let slot_period = ticks_per_bar * SLOT_BARS[i];
                         let phase_offset = i as f32 * (slot_period / NUM_SLOTS as f32);
                         let sin_val = ((t + phase_offset) / slot_period * std::f32::consts::TAU).sin();
@@ -1140,6 +1140,8 @@ impl Model for EditorData {
                         }
                     });
 
+                    let mut overlay_alpha_mult: f32 = 1.0;  // V5: DropPhase suppress (1.0 = no effect, 0.05 = suppressed)
+
                     // Apply smearing to overlay positions after slot creation
                     for i in 0..NUM_SLOTS {
                         let new_r = slots[i].row_shift as f32;
@@ -1152,7 +1154,7 @@ impl Model for EditorData {
                     let base_dust = self.visual_profile.dust_density * 0.88; // V6: 12% less dust
                     let dust_density = base_dust + energy * 0.17;
                     let dust_density = if transient { (dust_density + 0.20).min(0.90) } else { dust_density };
-                    let dust_density = (dust_density - 0.02).max(0.0);  // V5: global activity reduction
+                    let mut dust_density = (dust_density - 0.02).max(0.0);  // V5: global activity reduction
 
                     // ── V2: Color temporal drift (subtle per-layer phase offset) ──
                     let color_drift = (t * 0.001).sin() * (0.02 + phrase_arc * 0.06);
@@ -1231,12 +1233,9 @@ impl Model for EditorData {
                         if entering_drop && !self.drop_detected {
                             self.drop_detected = true;
                             self.drop_timer = 0;
-                            // Force collapse on drop
-                            self.moment.active = Some(Moment::Collapse);
-                            self.moment.timer = 0;
-                            self.moment.duration = 30;
-                            self.moment.seed = trigger_hash;
-                            self.moment.cooldown = 0;
+                            // V5: DropPhase — visual suppress first, then GlitchBloom re-entry
+                            self.drop_phase_timer = 3 + (trigger_hash & 1);  // 3 or 4 frames
+                            // Moment::Collapse is NOT triggered — DropPhase suppress handles the visual gap
                         }
                         if self.drop_detected {
                             self.drop_timer += 1;
@@ -1344,6 +1343,41 @@ impl Model for EditorData {
                     let _afterglow_active = matches!(self.moment.active, Some(Moment::Afterglow));
                     let user_accent_active = matches!(self.moment.active, Some(Moment::UserAccent));
                     let accent_boost = if user_accent_active { 0.15 } else { 0.0 };
+
+                    // V5: DropPhase suppress phase (mutates overlay_alpha_mult, glitch_prob, dust_density, effective_smear)
+                    if self.drop_phase_timer > 0 {
+                        self.drop_phase_timer -= 1;
+                        overlay_alpha_mult = 0.05;
+                        glitch_prob = 0.0;
+                        dust_density *= 0.20;
+                        effective_smear = 0.0;
+                        // When timer just reached 0: force GlitchBloom re-entry
+                        if self.drop_phase_timer == 0 {
+                            self.drop_reentry_timer = 10;
+                            // Compute local hash — trigger_hash is out of scope here
+                            let reentry_hash = (self.anim_tick as u32).wrapping_mul(2654435761);
+                            self.moment.active = Some(Moment::GlitchBloom);
+                            self.moment.timer = 0;
+                            self.moment.duration = 15;
+                            self.moment.seed = reentry_hash;
+                            self.moment.bloom_center = (
+                                ((reentry_hash >> 4) as usize % 54),
+                                ((reentry_hash >> 14) as usize % 42),
+                            );
+                        }
+                    }
+                    // V5: DropPhase re-entry amplification
+                    if self.drop_reentry_timer > 0 {
+                        self.drop_reentry_timer -= 1;
+                        glitch_prob *= 1.8 + self.intent_chaos * 0.4;  // up to ×2.2
+                    }
+
+                    // V5: Apply overlay_alpha_mult to slots (must happen after suppress block has a chance to set it)
+                    if overlay_alpha_mult < 1.0 {
+                        for s in slots.iter_mut() {
+                            s.alpha *= overlay_alpha_mult;
+                        }
+                    }
 
                     // ── V3: Restraint — idle windows ──
                     let idle_dampen = if visual_state == 0 && self.moment.active.is_none() { 0.35 } else { 1.0 };
