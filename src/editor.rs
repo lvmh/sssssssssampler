@@ -1760,7 +1760,7 @@ pub(crate) fn create(
 
             EditorData {
                 params: params.clone(),
-                theme_id: 3, // Noni
+                theme_id: 4, // Paris dark
                 dark_mode: true,
                 preset_idx: DEFAULT_PRESET,
                 frame_update_counter: 0,

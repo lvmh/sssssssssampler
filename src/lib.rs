@@ -93,35 +93,56 @@ impl Default for SssssssssamplerParams {
         Self {
             editor_state: editor::default_state(),
 
+            // ── Perceptual parameter mappings ──────────────────────────────────
+            //
+            // Every parameter uses nonlinear (skewed) ranges tuned so that:
+            //   • The musically useful zone sits in the middle of the knob
+            //   • Extreme/transparent ends are compressed to small travel
+            //   • Smoothers match the perceptual domain (log for freq, exp for intensity)
+
             target_sr: FloatParam::new(
                 "Sample Rate",
-                48_000.0,
+                26_040.0,
                 FloatRange::Skewed {
                     min: 1_000.0,
                     max: 96_000.0,
-                    factor: FloatRange::skew_factor(-2.0),
+                    // -2.8 skew: top 10% covers 46–96kHz (transparent zone),
+                    // middle 60% covers 2–46kHz (vintage sampler sweet spot)
+                    factor: FloatRange::skew_factor(-2.8),
                 },
             )
-            .with_smoother(SmoothingStyle::Logarithmic(30.0))
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" Hz")
             .with_value_to_string(formatters::v2s_f32_rounded(0)),
 
             bit_depth: FloatParam::new(
                 "Bit Depth",
                 12.0,
-                FloatRange::Linear { min: 1.0, max: 24.0 },
+                FloatRange::Skewed {
+                    min: 1.0,
+                    max: 24.0,
+                    // Negative skew expands 4–12 bit zone where reduction is audible;
+                    // 14–24 bit (perceptually identical) compresses to top of range
+                    factor: FloatRange::skew_factor(-1.5),
+                },
             )
-            .with_smoother(SmoothingStyle::Linear(30.0))
-            .with_step_size(0.1)
+            .with_smoother(SmoothingStyle::Exponential(40.0))
+            .with_step_size(1.0)
             .with_unit(" bit")
-            .with_value_to_string(formatters::v2s_f32_rounded(1)),
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
 
             jitter: FloatParam::new(
                 "Jitter",
                 0.01,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
+                FloatRange::Skewed {
+                    min: 0.0,
+                    max: 1.0,
+                    // Positive skew: most knob travel in subtle jitter range (0–0.1),
+                    // extreme chaos compressed to top end
+                    factor: FloatRange::skew_factor(1.5),
+                },
             )
-            .with_smoother(SmoothingStyle::Linear(30.0))
+            .with_smoother(SmoothingStyle::Exponential(25.0))
             .with_unit("%")
             .with_value_to_string(formatters::v2s_f32_percentage(1))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -131,7 +152,7 @@ impl Default for SssssssssamplerParams {
                 1.0,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             )
-            .with_smoother(SmoothingStyle::Linear(5.0))
+            .with_smoother(SmoothingStyle::Linear(15.0))
             .with_unit("%")
             .with_value_to_string(formatters::v2s_f32_percentage(1))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -139,9 +160,16 @@ impl Default for SssssssssamplerParams {
             filter_cutoff: FloatParam::new(
                 "Filter Cutoff",
                 1.0,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
+                FloatRange::Skewed {
+                    min: 0.01,
+                    max: 1.0,
+                    // Positive skew: bottom 25% reaches 0.62 (already-dark),
+                    // top 75% covers the entire audible filter sweep.
+                    // Min 0.01 prevents silence and enables Logarithmic smoother.
+                    factor: FloatRange::skew_factor(1.5),
+                },
             )
-            .with_smoother(SmoothingStyle::Linear(20.0))
+            .with_smoother(SmoothingStyle::Logarithmic(15.0))
             .with_unit("%")
             .with_value_to_string(formatters::v2s_f32_percentage(0))
             .with_string_to_value(formatters::s2v_f32_percentage()),
@@ -155,7 +183,7 @@ impl Default for SssssssssamplerParams {
             .with_value_to_string(formatters::v2s_f32_rounded(0))
             .with_unit("-pole"),
 
-            anti_alias: BoolParam::new("Anti-Aliasing", true),
+            anti_alias: BoolParam::new("Anti-Aliasing", false),
         }
     }
 }

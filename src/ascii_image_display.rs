@@ -29,35 +29,38 @@ const ROW_SR: usize = 3;
 const ROW_FILTER: usize = 4;
 const ROW_AA: usize = 5;
 const ROW_MACHINE: usize = 6;
-// ── Hover menu row positions ──
-const ROW_SOUND_HDR: usize = 8;
-const ROW_BITS: usize = 9;
-const ROW_JITTER: usize = 10;
-const ROW_MIX: usize = 11;
-const ROW_VISUAL_HDR: usize = 13;
-const ROW_THEME: usize = 14;
-const ROW_MODE: usize = 15;
-const ROW_FEEL: usize = 16;
+const ROW_SEPARATOR: usize = 7;
+const ROW_MORE: usize = 8;
+// ── Expanded menu row positions (visible when "more" is open) ──
+const ROW_SOUND_HDR: usize = 9;
+const ROW_BITS: usize = 10;
+const ROW_JITTER: usize = 11;
+const ROW_MIX: usize = 12;
+const ROW_VISUAL_HDR: usize = 14;
+const ROW_THEME: usize = 15;
+const ROW_MODE: usize = 16;
+const ROW_FEEL: usize = 17;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum UiRow {
-    SampleRate, Filter, AntiAlias, MachineSelect,
+    SampleRate, Filter, AntiAlias, MachineSelect, MoreToggle,
     BitDepth, Jitter, Mix, ThemeSelect, Mode, Feel,
 }
 
 impl UiRow {
-    fn from_grid_row(grid_row: usize, _col: usize, menu_vis: bool) -> Option<Self> {
+    fn from_grid_row(grid_row: usize, _col: usize, menu_vis: bool, more_open: bool) -> Option<Self> {
         match grid_row {
             ROW_SR => Some(Self::SampleRate),
             ROW_FILTER => Some(Self::Filter),
             ROW_AA => Some(Self::AntiAlias),
             ROW_MACHINE => Some(Self::MachineSelect),
-            ROW_BITS if menu_vis => Some(Self::BitDepth),
-            ROW_JITTER if menu_vis => Some(Self::Jitter),
-            ROW_MIX if menu_vis => Some(Self::Mix),
-            ROW_THEME if menu_vis => Some(Self::ThemeSelect),
-            ROW_MODE if menu_vis => Some(Self::Mode),
-            ROW_FEEL if menu_vis => Some(Self::Feel),
+            ROW_MORE if menu_vis => Some(Self::MoreToggle),
+            ROW_BITS if menu_vis && more_open => Some(Self::BitDepth),
+            ROW_JITTER if menu_vis && more_open => Some(Self::Jitter),
+            ROW_MIX if menu_vis && more_open => Some(Self::Mix),
+            ROW_THEME if menu_vis && more_open => Some(Self::ThemeSelect),
+            ROW_MODE if menu_vis && more_open => Some(Self::Mode),
+            ROW_FEEL if menu_vis && more_open => Some(Self::Feel),
             _ => None,
         }
     }
@@ -89,6 +92,8 @@ pub struct AsciiImageDisplay {
     menu_reveal_t: RefCell<f32>,
     // V6: typewriter effect — how many title chars are revealed
     title_chars_revealed: RefCell<usize>,
+    // "more" toggle: collapsed by default, click to expand sound+visual sections
+    more_expanded: RefCell<bool>,
 }
 
 impl AsciiImageDisplay {
@@ -112,6 +117,7 @@ impl AsciiImageDisplay {
             dropdown: RefCell::new(None),
             menu_reveal_t: RefCell::new(0.0),
             title_chars_revealed: RefCell::new(0),
+            more_expanded: RefCell::new(false),
         }
         .build(cx, |_cx| {})
         .size(Stretch(1.0))
@@ -174,35 +180,57 @@ impl AsciiImageDisplay {
         }
     }
 
-    fn apply_drag_delta(&self, row: UiRow, start_val: f32, delta: f32) {
+    /// Velocity-aware drag with micro-inertia.
+    /// Slow drags → precise adjustments, fast drags → larger but damped changes.
+    fn apply_drag_delta(&self, row: UiRow, start_val: f32, delta: f32, fine: bool) {
         let setter = ParamSetter::new(&*self.gui_ctx);
+        // Fine mode (Shift held): 5× reduction
+        let fine_mult = if fine { 0.2 } else { 1.0 };
+        // Velocity-aware scaling: damp large deltas with sqrt curve
+        let velocity_shaped = |d: f32, base_speed: f32| -> f32 {
+            let sign = d.signum();
+            let mag = d.abs();
+            // sqrt curve: large movements grow sublinearly → prevents overshoot
+            let shaped = mag.sqrt() * mag.sqrt().sqrt(); // mag^0.75
+            sign * shaped * base_speed * fine_mult
+        };
+
         match row {
             UiRow::SampleRate => {
+                // Log-scaled drag for frequency-domain parameter
                 let log_start = (start_val / 1000.0).max(0.001).ln();
-                let speed = delta * 0.002 * (start_val / 1000.0).max(0.5);
+                let speed = velocity_shaped(delta, 0.0012) * (start_val / 1000.0).max(0.5);
                 let new_val = ((log_start + speed).exp() * 1000.0).clamp(1000.0, 96000.0);
                 setter.begin_set_parameter(&self.params.target_sr);
                 setter.set_parameter(&self.params.target_sr, new_val);
                 setter.end_set_parameter(&self.params.target_sr);
             }
             UiRow::Filter => {
+                // Smooth sweep feel with reduced sensitivity
+                let adj = velocity_shaped(delta, 0.001);
                 setter.begin_set_parameter(&self.params.filter_cutoff);
-                setter.set_parameter(&self.params.filter_cutoff, (start_val + delta * 0.0015).clamp(0.0, 1.0));
+                setter.set_parameter(&self.params.filter_cutoff, (start_val + adj).clamp(0.01, 1.0));
                 setter.end_set_parameter(&self.params.filter_cutoff);
             }
             UiRow::BitDepth => {
+                // Snap to whole-bit steps for clean detents
+                let adj = velocity_shaped(delta, 0.04);
+                let raw = start_val + adj;
+                let snapped = raw.round().clamp(1.0, 24.0);
                 setter.begin_set_parameter(&self.params.bit_depth);
-                setter.set_parameter(&self.params.bit_depth, (start_val + delta * 0.06).clamp(1.0, 24.0));
+                setter.set_parameter(&self.params.bit_depth, snapped);
                 setter.end_set_parameter(&self.params.bit_depth);
             }
             UiRow::Jitter => {
+                let adj = velocity_shaped(delta, 0.0025);
                 setter.begin_set_parameter(&self.params.jitter);
-                setter.set_parameter(&self.params.jitter, (start_val + delta * 0.004).clamp(0.0, 1.0));
+                setter.set_parameter(&self.params.jitter, (start_val + adj).clamp(0.0, 1.0));
                 setter.end_set_parameter(&self.params.jitter);
             }
             UiRow::Mix => {
+                let adj = velocity_shaped(delta, 0.004);
                 setter.begin_set_parameter(&self.params.mix);
-                setter.set_parameter(&self.params.mix, (start_val + delta * 0.004).clamp(0.0, 1.0));
+                setter.set_parameter(&self.params.mix, (start_val + adj).clamp(0.0, 1.0));
                 setter.end_set_parameter(&self.params.mix);
             }
             _ => {}
@@ -419,12 +447,20 @@ impl AsciiImageDisplay {
             self.draw_row(canvas, fid, &machine_str, ROW_MACHINE, color, font_size, cell_w, cell_h, offset_x, offset_y, row_wave(2));
         }
 
-        // ── Extended menu (hidden during dropdown) ──
-        if dropdown.is_none() {
+        // ── "more" toggle (ROW_SEPARATOR is blank spacing) ──
+        {
+            let expanded = *self.more_expanded.borrow();
+            let more_str = if expanded { "- more" } else { "+ more" };
+            self.draw_row(canvas, fid, more_str, ROW_MORE, menu_color(ROW_MORE, energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, 0.0);
+        }
+
+        // ── Extended menu (hidden unless "more" expanded + no dropdown) ──
+        let more_open = *self.more_expanded.borrow();
+        if more_open && dropdown.is_none() {
             // Sound section
             self.draw_row(canvas, fid, "sound \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}", ROW_SOUND_HDR, dim_color(energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, 0.0);
 
-            let bits_str = format!("bits: {:.1}", self.params.bit_depth.value());
+            let bits_str = format!("bits: {:.0}", self.params.bit_depth.value());
             self.draw_row(canvas, fid, &bits_str, ROW_BITS, menu_color(ROW_BITS, energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, row_wave(3));
 
             let jitter_str = format!("jitter: {:.1}%", self.params.jitter.value() * 100.0);
@@ -446,7 +482,7 @@ impl AsciiImageDisplay {
             let fname = FEEL_NAMES.get(fb.feel_idx as usize).unwrap_or(&"???");
             let feel_str = format!("feel: {}", fname);
             self.draw_row(canvas, fid, &feel_str, ROW_FEEL, menu_color(ROW_FEEL, energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, row_wave(8));
-        } // close: if dropdown.is_none()
+        } // close: if more_open && dropdown.is_none()
 
         // ═══════════════════════════════════════════════════════════════════
         // PASS 3: Dropdown (when open)
@@ -537,7 +573,8 @@ impl View for AsciiImageDisplay {
             let in_zone = mx < bounds.w * 0.5 && my < bounds.h * 0.5;
             let dragging = self.drag.borrow().is_some();
             let dd_open = self.dropdown.borrow().is_some();
-            *self.menu_visible.borrow_mut() = in_zone || dragging || dd_open;
+            let more_open = *self.more_expanded.borrow();
+            *self.menu_visible.borrow_mut() = in_zone || dragging || dd_open || more_open;
         }
 
         let frame = {
@@ -661,7 +698,8 @@ impl View for AsciiImageDisplay {
                         let row = ds.row;
                         let sv = ds.start_value;
                         drop(drag);
-                        self.apply_drag_delta(row, sv, delta);
+                        let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                        self.apply_drag_delta(row, sv, delta, fine);
                     }
                 }
                 WindowEvent::MouseDown(MouseButton::Left) => {
@@ -705,7 +743,8 @@ impl View for AsciiImageDisplay {
                         // ── Normal click handling ──
                         if col < UI_COL || col >= UI_COL + UI_WIDTH { return; }
 
-                        if let Some(ui_row) = UiRow::from_grid_row(row, col, menu_vis) {
+                        let more_open = *self.more_expanded.borrow();
+                        if let Some(ui_row) = UiRow::from_grid_row(row, col, menu_vis, more_open) {
                             if ui_row.is_draggable() {
                                 *self.drag.borrow_mut() = Some(DragState {
                                     row: ui_row, start_x: mx, start_y: my,
@@ -718,6 +757,9 @@ impl View for AsciiImageDisplay {
                                 setter.begin_set_parameter(&self.params.anti_alias);
                                 setter.set_parameter(&self.params.anti_alias, !self.params.anti_alias.value());
                                 setter.end_set_parameter(&self.params.anti_alias);
+                            } else if ui_row == UiRow::MoreToggle {
+                                let mut expanded = self.more_expanded.borrow_mut();
+                                *expanded = !*expanded;
                             } else if ui_row == UiRow::MachineSelect {
                                 let current = *self.dropdown.borrow();
                                 *self.dropdown.borrow_mut() = if current == Some(DropdownKind::Machine) { None } else { Some(DropdownKind::Machine) };
