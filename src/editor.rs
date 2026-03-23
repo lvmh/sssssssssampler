@@ -941,8 +941,15 @@ impl Model for EditorData {
                     // Smeared positions: lerp between previous and current
                     let new_row_scroll_f = (self.velocity_row.abs() * 2.0) % ROWS as usize as f32;
                     let new_col_drift_f = self.velocity_col;
-                    self.prev_row_scroll += (new_row_scroll_f - self.prev_row_scroll) * (1.0 - effective_smear);
-                    self.prev_col_drift += (new_col_drift_f - self.prev_col_drift) * (1.0 - effective_smear);
+                    // V5: Temporal Echo — SR-driven lock-then-snap rhythm
+                    let smear_rate = if sr_effect > 0.30 && step_interval > 1 {
+                        let hold = (self.quant_frame % step_interval) != 0;
+                        if hold { 0.02 } else { 1.0 - effective_smear }
+                    } else {
+                        1.0 - effective_smear
+                    };
+                    self.prev_row_scroll += (new_row_scroll_f - self.prev_row_scroll) * smear_rate;
+                    self.prev_col_drift += (new_col_drift_f - self.prev_col_drift) * smear_rate;
                     let row_scroll = self.prev_row_scroll as usize;
                     let col_drift = self.prev_col_drift as i32;
 
