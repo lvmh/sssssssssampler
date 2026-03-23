@@ -720,7 +720,7 @@ impl Model for EditorData {
 
                     // ── V2: Mix → overlay aggression ──
                     let mix = mix_val.clamp(0.0, 1.0);
-                    let overlay_visibility = mix * 0.80;
+                    let mut overlay_visibility = mix * 0.80 * 0.96;  // V5: global activity reduction (×0.96)
                     // Overlay density: mix controls how many cells show
                     let overlay_density_threshold = 0.02 + mix * 0.98; // 2%→100% (phrase mod applied later)
                     // Overlay scroll rate scales with mix + energy
@@ -735,12 +735,12 @@ impl Model for EditorData {
                     // Probability scales with energy in BUILD/PEAK states
                     let fatigue_mult = (1.0 - self.memory.fatigue).clamp(0.2, 1.0);
                     let recovery_glitch_mult = if self.moment_recovery_timer > 0 { 0.3 } else { 1.0 };
-                    let glitch_prob = match corruption_tier {
+                    let mut glitch_prob = match corruption_tier {
                         0 => 0.0,
                         1 => 0.0015 * fatigue_mult * recovery_glitch_mult,
                         2 => (0.004 + energy * 0.008) * fatigue_mult * recovery_glitch_mult,
                         _ => (0.008 + energy * 0.016) * fatigue_mult * recovery_glitch_mult,
-                    } * self.glitch_scale * self.visual_profile.glitch_mult;
+                    } * self.glitch_scale * self.visual_profile.glitch_mult * 0.95;  // V5: mutable; global activity reduction applied at declaration
 
                     let palette = ColorPalette::from_id_and_mode(self.theme_id, self.dark_mode);
 
@@ -1145,6 +1145,7 @@ impl Model for EditorData {
                     let base_dust = self.visual_profile.dust_density * 0.88; // V6: 12% less dust
                     let dust_density = base_dust + energy * 0.17;
                     let dust_density = if transient { (dust_density + 0.20).min(0.90) } else { dust_density };
+                    let dust_density = (dust_density - 0.02).max(0.0);  // V5: global activity reduction
 
                     // ── V2: Color temporal drift (subtle per-layer phase offset) ──
                     let color_drift = (t * 0.001).sin() * (0.02 + phrase_arc * 0.06);
