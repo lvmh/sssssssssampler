@@ -804,6 +804,9 @@ impl Model for EditorData {
 
                     // ── BPM timing ──
                     let bpm = anim_params.bpm.clamp(40.0, 200.0);
+                    // V3+V5: LockIn + Hero Lock — computed early for phrase boundary guards
+                    let lockin_active = matches!(self.moment.active, Some(Moment::LockIn));
+                    let hero_lock = visual_state == 3 || lockin_active;
                     let ticks_per_beat = 60.0 * 60.0 / bpm;
                     let ticks_per_bar = ticks_per_beat * 4.0;
 
@@ -829,7 +832,7 @@ impl Model for EditorData {
                             let anchors = get_composition_anchors(self.composition_mode);
                             self.prev_core_anchor = self.core_anchor;
                             self.core_anchor = anchors[0];
-                            for i in 0..4 { self.overlay_anchors[i] = anchors[1 + i]; }
+                            if !hero_lock { for i in 0..4 { self.overlay_anchors[i] = anchors[1 + i]; } }
                         }
                     }
                     self.phrase_phase = self.phrase_bar_counter / self.phrase_length_bars.max(1.0);
@@ -884,9 +887,35 @@ impl Model for EditorData {
                     // Random position offset for small core images
                     let core_w = if core_img < img_count { self.ascii_bank.images[core_img].grid.width as i32 } else { COLS as i32 };
                     let core_h = if core_img < img_count { self.ascii_bank.images[core_img].grid.height as i32 } else { ROWS as i32 };
+
+                    // V5: Pre-physics locals for Hero Lock + Intent Mode
+                    let mut core_pull_factor = if hero_lock { CORE_PULL * 5.0 } else { CORE_PULL };
+                    let mut row_damping = self.visual_profile.row_damping;
+
+                    // Apply Intent Mode effects from previous frame's intent_mode_t (one-frame lag is imperceptible)
+                    let imt = self.intent_mode_t;
+                    match self.intent_mode {
+                        1 => { // Tension
+                            row_damping *= 1.0 + 0.04 * imt;
+                            glitch_prob *= 1.0 - 0.15 * imt;
+                            core_pull_factor *= 1.0 + 0.3 * imt;
+                        }
+                        2 => { // Chaos
+                            row_damping *= 1.0 - 0.06 * imt;
+                            glitch_prob *= 1.0 + 0.20 * imt;
+                            core_pull_factor *= 1.0 - 0.2 * imt;
+                        }
+                        3 => { // Release — overlay_visibility and effective_smear modified later
+                            // row_damping and core_pull_factor unchanged for Release
+                        }
+                        _ => {}
+                    }
+
+                    if hero_lock { glitch_prob *= 0.90; }  // V5: Hero Lock glitch reduction
+
                     // V4: Anchor-based core positioning
-                    self.core_pos.0 += (self.core_anchor.0 - self.core_pos.0) * CORE_PULL;
-                    self.core_pos.1 += (self.core_anchor.1 - self.core_pos.1) * CORE_PULL;
+                    self.core_pos.0 += (self.core_anchor.0 - self.core_pos.0) * core_pull_factor;
+                    self.core_pos.1 += (self.core_anchor.1 - self.core_pos.1) * core_pull_factor;
                     // Orbital offset
                     let core_orbital_c = (t * 0.003).sin() * 2.0 + lr_balance * 2.0; // V6: stereo drift (tighter)
                     let core_orbital_r = (t * 0.002).cos() * 1.5;
@@ -931,12 +960,24 @@ impl Model for EditorData {
                     if should_update && !is_frozen {
                         let core_accel = (bpm_force + energy_force * motion_speed) / CORE_MASS;
                         self.velocity_row += core_accel;
-                        self.velocity_row *= self.visual_profile.row_damping;
+                        self.velocity_row *= row_damping;
                         self.velocity_row = self.velocity_row.clamp(-8.0, 8.0);
                         let col_force = (t / (ticks_per_bar * 2.0) * std::f32::consts::TAU).cos() * 0.15;
                         self.velocity_col += (col_force + energy_force * 0.2) / CORE_MASS;
                         self.velocity_col *= self.visual_profile.col_damping;
                         self.velocity_col = self.velocity_col.clamp(-4.0, 4.0);
+                    }
+                    // V5: Hero Lock extra velocity damping + symmetric anchor snap
+                    if hero_lock {
+                        self.velocity_row *= 0.85;
+                        self.velocity_col *= 0.85;
+                        for i in 0..4 {
+                            let angle = i as f32 * std::f32::consts::FRAC_PI_2;
+                            self.overlay_anchors[i] = (
+                                self.core_anchor.0 + angle.sin() * 8.0,
+                                self.core_anchor.1 + angle.cos() * 8.0,
+                            );
+                        }
                     }
                     // Smeared positions: lerp between previous and current
                     let new_row_scroll_f = (self.velocity_row.abs() * 2.0) % ROWS as usize as f32;
@@ -990,12 +1031,12 @@ impl Model for EditorData {
 
                     // V4: Update overlay positions toward anchors with role-specific pull
                     // Accent retargets on transient
-                    if transient {
+                    if transient && !hero_lock {
                         let accent_hash = (self.anim_tick as u32).wrapping_mul(1664525);
                         self.overlay_anchors[1] = ANCHORS[(accent_hash as usize) % ANCHORS.len()];
                     }
                     // Ghost follows previous core anchor
-                    self.overlay_anchors[3] = self.prev_core_anchor;
+                    if !hero_lock { self.overlay_anchors[3] = self.prev_core_anchor; }
 
                     // Orbit mode: add sine/cosine offsets
                     let orbit_offsets: [(f32, f32); 4] = if self.composition_mode == 3 {
@@ -1057,8 +1098,7 @@ impl Model for EditorData {
                         }
                     }
 
-                    // V3: LockIn — check if moment is active (from previous frame)
-                    let lockin_active = matches!(self.moment.active, Some(Moment::LockIn));
+                    // V3: LockIn — lockin_active moved up for hero_lock (pre-physics)
                     let overlay_recovery = self.moment_recovery_timer > 0;
 
                     let mut slots: [OverlaySlot; NUM_SLOTS] = std::array::from_fn(|i| {
