@@ -1482,9 +1482,11 @@ impl Model for EditorData {
                                 let jit = ((jitter_hash >> 16) as i32 % 3) - 1; // -1, 0, or 1
                                 if jitter_val > 0.7 { jit * 2 } else { jit }
                             } else { 0 };
-                            let base_col = cu as i32 + col_drift - core_col_off + phase_shift + jitter_offset;
+                            // V5: Global field warp (step 1 — before base_col)
+                            let (wx, wy) = warp_offset(col, row, self.warp_phase, self.intent_chaos, energy);
+                            let base_col = cu as i32 + col_drift - core_col_off + phase_shift + jitter_offset + wx;
                             let bank_col_base = if base_col >= 0 { base_col as usize } else { 9999 }; // out-of-bounds → get_cell returns 0
-                            let src_row_signed = bank_row as i32 + row_scroll as i32 - core_row_off;
+                            let src_row_signed = bank_row as i32 + row_scroll as i32 - core_row_off + wy;
                             let src_row = if src_row_signed >= 0 { src_row_signed as usize } else { 9999 };
 
                             let base_raw = if in_base_margin || src_row >= core_h as usize {
@@ -1940,6 +1942,7 @@ impl Model for EditorData {
                     }
 
                     self.glitch_field_phase += 0.01;
+                    self.warp_phase += 0.007;  // V5: field warp clock
                     frame_buffer.energy = energy;
                     frame_buffer.bpm = anim_bpm;
                     frame_buffer.sub_bass_energy = sub_bass;
