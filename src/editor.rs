@@ -404,6 +404,21 @@ pub struct EditorData {
     // V6: first load — 33% chance to show image #1 centered
     #[lens(ignore)]
     pub first_load_img1: bool,
+    // ── V5 (new): DropPhase system ──
+    #[lens(ignore)]
+    pub drop_phase_timer: u32,
+    #[lens(ignore)]
+    pub drop_reentry_timer: u32,
+    // ── V5 (new): Field warp ──
+    #[lens(ignore)]
+    pub warp_phase: f32,
+    // ── V5 (new): Intent rendering modes ──
+    #[lens(ignore)]
+    pub intent_mode: u8,
+    #[lens(ignore)]
+    pub intent_mode_t: f32,
+    #[lens(ignore)]
+    pub intent_mode_bars: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -1845,6 +1860,12 @@ pub(crate) fn create(
                         .unwrap_or(42);
                     (seed % 3) == 0 // 33% chance
                 },
+                drop_phase_timer: 0,
+                drop_reentry_timer: 0,
+                warp_phase: 0.0,
+                intent_mode: 0,
+                intent_mode_t: 0.0,
+                intent_mode_bars: 0.0,
             }
             .build(cx);
 
