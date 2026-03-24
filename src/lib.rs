@@ -19,7 +19,6 @@ struct Sssssssssampler {
     phase: [f32; 2],
     held: [f32; 2],
     filter: FilterState,
-    last_filter_step: f32,
     last_filter_cutoff: f32,
     last_filter_poles: i32,
     audio_feed: audio_feed::AudioFeed,
@@ -39,7 +38,6 @@ impl Default for Sssssssssampler {
             phase: [1.0; 2],
             held: [0.0; 2],
             filter: FilterState::new(),
-            last_filter_step: -1.0,
             last_filter_cutoff: -1.0,
             last_filter_poles: -1,
             audio_feed: audio_feed::AudioFeed::default(),
@@ -106,11 +104,12 @@ impl Default for SssssssssamplerParams {
                 "Sample Rate",
                 26_040.0,
                 FloatRange::Skewed {
-                    min: 1_000.0,
-                    max: 96_000.0,
-                    // -2.8 skew: top 10% covers 46–96kHz (transparent zone),
-                    // middle 60% covers 2–46kHz (vintage sampler sweet spot)
-                    factor: FloatRange::skew_factor(-2.8),
+                    min: 4_000.0,
+                    max: 44_100.0,
+                    // -2.0 skew: mid-knob sits ~12kHz (vintage sweet spot).
+                    // Full range covers S950 minimum (~7kHz) through MPC60/CD (44.1kHz).
+                    // No machine operated above 44.1kHz — the old 96kHz top was dead travel.
+                    factor: FloatRange::skew_factor(-2.0),
                 },
             )
             .with_smoother(SmoothingStyle::Logarithmic(50.0))
@@ -161,20 +160,19 @@ impl Default for SssssssssamplerParams {
 
             filter_cutoff: FloatParam::new(
                 "Filter Cutoff",
-                1.0,
+                22_050.0,
                 FloatRange::Skewed {
-                    min: 0.01,
-                    max: 1.0,
-                    // Positive skew: bottom 25% reaches 0.62 (already-dark),
-                    // top 75% covers the entire audible filter sweep.
-                    // Min 0.01 prevents silence and enables Logarithmic smoother.
-                    factor: FloatRange::skew_factor(1.5),
+                    min: 200.0,
+                    max: 22_050.0,
+                    // -2.0 skew: logarithmic feel matching human pitch perception.
+                    // Mid-knob sits ~2kHz. Floor at 200Hz allows extreme alias sculpting
+                    // when AA is off — low enough to mangle, high enough to not go silent.
+                    factor: FloatRange::skew_factor(-2.0),
                 },
             )
             .with_smoother(SmoothingStyle::Logarithmic(15.0))
-            .with_unit("%")
-            .with_value_to_string(formatters::v2s_f32_percentage(0))
-            .with_string_to_value(formatters::s2v_f32_percentage()),
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_rounded(0)),
 
             filter_poles: FloatParam::new(
                 "Filter Poles",
@@ -379,7 +377,6 @@ impl Plugin for Sssssssssampler {
         self.held = [0.0; 2];
         self.filter.reset();
         self.pre_filter.reset();
-        self.last_filter_step = -1.0;
         self.last_filter_cutoff = -1.0;
         self.last_filter_poles = -1;
         self.drift_phase = 0.0;
@@ -402,7 +399,6 @@ impl Plugin for Sssssssssampler {
             self.filter.reset();
             self.pre_filter.reset();
             self.last_filter_poles  = poles;
-            self.last_filter_step   = -1.0;
             self.last_filter_cutoff = -1.0;
         }
 
@@ -417,26 +413,16 @@ impl Plugin for Sssssssssampler {
             let bit_depth_smooth  = self.params.bit_depth.smoothed.next();
             let jitter_smooth     = self.params.jitter.smoothed.next();
             let mix           = self.params.mix.smoothed.next();
-            let filter_cutoff = self.params.filter_cutoff.smoothed.next();
+            // filter_cutoff is in Hz; convert to fc_norm ∈ (0,1) re: host Nyquist.
+            let filter_cutoff_hz = self.params.filter_cutoff.smoothed.next();
+            let filter_cutoff = (filter_cutoff_hz / (host_sr * 0.5)).clamp(0.001, 0.999);
 
             let step = (target_sr_smooth / host_sr).min(1.0);
 
-            // When anti-alias is ON, cap at 0.95 of target Nyquist to suppress
-            // fold-back right at the Nyquist boundary. User's cutoff takes priority
-            // when sweeping below that point.
-            let effective_cutoff = if anti_alias_enabled {
-                filter_cutoff.min(0.95)
-            } else {
-                filter_cutoff
-            };
-
-            // Lazy coefficient update when SR or effective cutoff shifts meaningfully.
-            if (step - self.last_filter_step).abs() > 0.0002
-                || (effective_cutoff - self.last_filter_cutoff).abs() > 0.001
-            {
-                self.filter.update(effective_cutoff, poles);
-                self.last_filter_step   = step;
-                self.last_filter_cutoff = effective_cutoff;
+            // ── Reconstruction filter — independent of AA, only updates when cutoff changes.
+            if (filter_cutoff - self.last_filter_cutoff).abs() > 0.001 {
+                self.filter.update(filter_cutoff, poles);
+                self.last_filter_cutoff = filter_cutoff;
             }
 
             // ── Clock drift (slow LFO ~0.3 Hz) ──────────────────────
@@ -444,21 +430,25 @@ impl Plugin for Sssssssssampler {
             if self.drift_phase > 1.0 { self.drift_phase -= 1.0; }
             let drift = (self.drift_phase * std::f32::consts::TAU).sin() * 0.0005;
 
-            // ── Pre-filter update (for steep-filter machines) ────────
-            if poles >= 4 {
-                let pre_fc = (step * 0.8).min(0.99);
-                self.pre_filter.update(pre_fc, 0.7071);
+            // ── Anti-alias pre-filter — always tracks target SR Nyquist.
+            // Applied on 4-pole+ machines always (hardware behavior).
+            // Applied on 2-pole machines only when anti_alias_enabled (SP-1200 had no AA
+            // by default; enabling it adds modern alias suppression).
+            let apply_aa = poles >= 4 || anti_alias_enabled;
+            if apply_aa {
+                let aa_fc = (step * 0.9).min(0.99);
+                self.pre_filter.update(aa_fc, 0.7071);
             }
 
             for (ch, sample) in channel_samples.into_iter().enumerate() {
                 let ch  = ch.min(1);
                 let dry = *sample;
 
-                // ── Pre-filter (analog input AA stage for steep-filter machines) ──
-                let input = if poles >= 4 {
+                // ── Anti-alias pre-filter (before S&H, tracks target SR Nyquist) ──
+                let input = if apply_aa {
                     self.pre_filter.process(dry, ch)
                 } else {
-                    dry // SP-1200/SP-12 style: no pre-filter = aliasing
+                    dry // SP-1200/SP-12 style: no AA = aliasing artifacts stay in
                 };
 
                 // ── Sample-and-hold with clock drift + jitter ────────
@@ -477,11 +467,8 @@ impl Plugin for Sssssssssampler {
                 // ── Bit crush with noise shaping ─────────────────────
                 let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
 
-                // ── Reconstruction filter ──────────────────────────────────
-                // Always applied. At filter_cutoff = 1.0, fc = step × 1.0 = target
-                // Nyquist, which is transparent for the processed signal (S&H cannot
-                // produce meaningful content above its own Nyquist). Sweeping down
-                // from there adds machine filter character continuously, no cliff.
+                // ── Reconstruction filter (machine character, independent of AA) ──
+                // Fully open at max Hz; sweep down to add machine bandwidth coloring.
                 wet = self.filter.process(wet, ch, poles);
 
                 // ── DAC reconstruction (one-pole IIR smoothing) ──────────
