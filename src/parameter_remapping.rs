@@ -11,7 +11,7 @@ pub fn sample_rate_to_instability(sr_hz: f32) -> f32 {
     //  4kHz–15kHz: extreme  (0.6–1.0)
     let sr = sr_hz.clamp(4_000.0, 48_000.0);
     if sr >= 44_000.0 {
-        (48_000.0 - sr) / 40_000.0            // 0.0 at 48kHz → 0.1 at 44kHz
+        0.05 + (48_000.0 - sr) / 80_000.0     // 0.05 at 48kHz → 0.10 at 44kHz
     } else if sr >= 30_000.0 {
         0.1 + (44_000.0 - sr) / 56_000.0      // 0.1 at 44kHz → 0.3 at 30kHz
     } else if sr >= 15_000.0 {

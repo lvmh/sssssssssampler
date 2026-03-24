@@ -783,7 +783,7 @@ impl Model for EditorData {
                     // SR effect curve calibrated for 4,000–48,000 Hz range:
                     // 44k–48k → 0–10% effect, 30k–44k → 10–35%, 15k–30k → 35–70%, 4k–15k → 70–100%
                     let sr_effect = if target_sr >= 44_000.0 {
-                        (48_000.0 - target_sr) / 40_000.0
+                        0.05 + (48_000.0 - target_sr) / 80_000.0
                     } else if target_sr >= 30_000.0 {
                         0.10 + (44_000.0 - target_sr) / 56_000.0
                     } else if target_sr >= 15_000.0 {
