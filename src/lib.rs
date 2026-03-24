@@ -109,7 +109,7 @@ impl Default for SssssssssamplerParams {
             //   • Smoothers match the perceptual domain (log for freq, exp for intensity)
 
             target_sr: FloatParam::new(
-                "Sample Rate",
+                "Bandwidth",
                 26_040.0,
                 FloatRange::Skewed {
                     min: 4_000.0,

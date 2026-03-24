@@ -200,7 +200,7 @@ impl AsciiImageDisplay {
                 // Log-scaled drag for frequency-domain parameter
                 let log_start = (start_val / 1000.0).max(0.001).ln();
                 let speed = velocity_shaped(delta, 0.0012) * (start_val / 1000.0).max(0.5);
-                let new_val = ((log_start + speed).exp() * 1000.0).clamp(4000.0, 44_100.0);
+                let new_val = ((log_start + speed).exp() * 1000.0).clamp(4000.0, 48_000.0);
                 setter.begin_set_parameter(&self.params.target_sr);
                 setter.set_parameter(&self.params.target_sr, new_val);
                 setter.end_set_parameter(&self.params.target_sr);
@@ -432,7 +432,7 @@ impl AsciiImageDisplay {
 
         // ── SR (row 3) — always shown when menu active ──
         let sr = self.params.target_sr.value();
-        let sr_str = if sr >= 1000.0 { format!("sr: {:.1}k", sr / 1000.0) } else { format!("sr: {:.0}", sr) };
+        let sr_str = if sr >= 1000.0 { format!("bw: {:.1}k", sr / 1000.0) } else { format!("bw: {:.0}", sr) };
         self.draw_row(canvas, fid, &sr_str, ROW_SR, menu_color(ROW_SR, energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, row_wave(0));
 
         // ── Filter (row 4) ──
