@@ -23,10 +23,13 @@ struct Sssssssssampler {
     last_filter_poles: i32,
     audio_feed: audio_feed::AudioFeed,
     // ── Hardware emulation state ──
-    drift_phase: f32,        // clock drift LFO phase
+    drift_phase: [f32; 2],   // per-channel clock drift LFO (slightly different rates)
     quant_error: [f32; 2],   // noise-shaping error per channel
-    prev_dac: [f32; 2],      // DAC reconstruction previous sample
-    pre_filter: BiquadState, // pre-sampling anti-alias filter
+    prev_dac: [f32; 2],      // DAC output stage previous sample
+    pre_filter: FilterState, // bandwidth/AA pre-filter (pole count matches machine)
+    pink_state: [f32; 2],    // one-pole pink noise filter state per channel
+    dc_x: [f32; 2],          // DC blocker: previous input sample
+    dc_y: [f32; 2],          // DC blocker: previous output sample
     rng_state: u64,          // persistent LCG state — must not reset per-block
 }
 
@@ -41,10 +44,13 @@ impl Default for Sssssssssampler {
             last_filter_cutoff: -1.0,
             last_filter_poles: -1,
             audio_feed: audio_feed::AudioFeed::default(),
-            drift_phase: 0.0,
+            drift_phase: [0.0; 2],
             quant_error: [0.0; 2],
             prev_dac: [0.0; 2],
-            pre_filter: BiquadState::new(),
+            pre_filter: FilterState::new(),
+            pink_state: [0.0; 2],
+            dc_x: [0.0; 2],
+            dc_y: [0.0; 2],
             rng_state: 0x123456789ABCDEF,
         }
     }
@@ -105,10 +111,9 @@ impl Default for SssssssssamplerParams {
                 26_040.0,
                 FloatRange::Skewed {
                     min: 4_000.0,
-                    max: 44_100.0,
+                    max: 48_000.0,
                     // -2.0 skew: mid-knob sits ~12kHz (vintage sweet spot).
-                    // Full range covers S950 minimum (~7kHz) through MPC60/CD (44.1kHz).
-                    // No machine operated above 44.1kHz — the old 96kHz top was dead travel.
+                    // 48kHz ceiling covers S950 (48kHz max) and all other machines.
                     factor: FloatRange::skew_factor(-2.0),
                 },
             )
@@ -379,9 +384,12 @@ impl Plugin for Sssssssssampler {
         self.pre_filter.reset();
         self.last_filter_cutoff = -1.0;
         self.last_filter_poles = -1;
-        self.drift_phase = 0.0;
+        self.drift_phase = [0.0; 2];
         self.quant_error = [0.0; 2];
         self.prev_dac = [0.0; 2];
+        self.pink_state = [0.0; 2];
+        self.dc_x = [0.0; 2];
+        self.dc_y = [0.0; 2];
         self.rng_state = 0x123456789ABCDEF;
     }
 
@@ -408,6 +416,13 @@ impl Plugin for Sssssssssampler {
         let jitter             = self.params.jitter.value();
         let anti_alias_enabled = self.params.anti_alias.value();
 
+        // S&H capacitor droop: charge leakage during hold phase.
+        // 40ms time constant — inaudible at host rate but adds organic sag on pads/tones.
+        let droop = (-1.0_f32 / (0.04 * host_sr)).exp();
+        // DC blocker coefficient: first-order HPF at ~15 Hz removes accumulated DC
+        // from asymmetric ADC nonlinearity. Computed once — host_sr never changes mid-block.
+        let dc_r = 1.0 - (std::f32::consts::TAU * 15.0 / host_sr);
+
         for channel_samples in buffer.iter_samples() {
             let target_sr_smooth  = self.params.target_sr.smoothed.next();
             let bit_depth_smooth  = self.params.bit_depth.smoothed.next();
@@ -417,7 +432,11 @@ impl Plugin for Sssssssssampler {
             let filter_cutoff_hz = self.params.filter_cutoff.smoothed.next();
             let filter_cutoff = (filter_cutoff_hz / (host_sr * 0.5)).clamp(0.001, 0.999);
 
-            let step = (target_sr_smooth / host_sr).min(1.0);
+            // AA ON  → bandwidth mode: SR knob sets filter cutoff, S&H runs at host rate
+            //          (step=1.0 = transparent S&H, AA filter does all the work)
+            // AA OFF → sample reduction mode: SR knob sets S&H rate, no AA filter
+            let bandwidth_fc = (target_sr_smooth / host_sr * 0.9).min(0.99);
+            let step = if anti_alias_enabled { 1.0 } else { (target_sr_smooth / host_sr).min(1.0) };
 
             // ── Reconstruction filter — independent of AA, only updates when cutoff changes.
             if (filter_cutoff - self.last_filter_cutoff).abs() > 0.001 {
@@ -425,28 +444,30 @@ impl Plugin for Sssssssssampler {
                 self.last_filter_cutoff = filter_cutoff;
             }
 
-            // ── Clock drift (slow LFO ~0.3 Hz) ──────────────────────
-            self.drift_phase += 0.3 / host_sr;
-            if self.drift_phase > 1.0 { self.drift_phase -= 1.0; }
-            let drift = (self.drift_phase * std::f32::consts::TAU).sin() * 0.0005;
-
-            // ── Anti-alias pre-filter — controlled entirely by AA toggle.
-            // Pole count only affects the reconstruction filter character;
-            // AA toggle gives the user full control over aliasing on any machine.
+            // ── Bandwidth filter (AA on only) — tracks SR knob, machine-matched slope ──
+            // Pre-filter uses the same pole count as the reconstruction filter so the
+            // AA input roll-off character matches the machine (S950: 6-pole, etc.)
             if anti_alias_enabled {
-                let aa_fc = (step * 0.9).min(0.99);
-                self.pre_filter.update(aa_fc, 0.7071);
+                self.pre_filter.update(bandwidth_fc, poles);
             }
 
             for (ch, sample) in channel_samples.into_iter().enumerate() {
                 let ch  = ch.min(1);
                 let dry = *sample;
 
-                // ── Anti-alias pre-filter (before S&H, tracks target SR Nyquist) ──
+                // ── Per-channel clock drift LFO ──────────────────────
+                // L: ~0.29 Hz, R: ~0.31 Hz — slightly different rates create
+                // subtle analog stereo widening without any correlation artifacts.
+                let drift_hz = if ch == 0 { 0.29_f32 } else { 0.31_f32 };
+                self.drift_phase[ch] += drift_hz / host_sr;
+                if self.drift_phase[ch] > 1.0 { self.drift_phase[ch] -= 1.0; }
+                let drift = (self.drift_phase[ch] * std::f32::consts::TAU).sin() * 0.0005;
+
+                // ── Bandwidth/AA pre-filter ──────────────────────────
                 let input = if anti_alias_enabled {
-                    self.pre_filter.process(dry, ch)
+                    self.pre_filter.process(dry, ch, poles)
                 } else {
-                    dry // AA off = raw aliasing regardless of machine type
+                    dry
                 };
 
                 // ── Sample-and-hold with clock drift + jitter ────────
@@ -454,30 +475,57 @@ impl Plugin for Sssssssssampler {
                     self.phase[ch] -= 1.0;
                     self.held[ch] = input;
                 }
+                // Capacitor droop: held charge leaks every sample
+                self.held[ch] *= droop;
                 let jitter_noise = lcg_rand(&mut self.rng_state);
                 let jitter_amount = jitter_smooth * step * 0.003 * jitter_noise;
                 self.phase[ch] += step * (1.0 + drift) + jitter_amount;
 
-                // ── ADC nonlinearity (subtle harmonic distortion) ────
+                // ── ADC nonlinearity — asymmetric soft-clip ───────────
+                // Negative cubic term = soft clipping (not expansion).
+                // s·|s| term is asymmetric (even harmonic) — models transistor
+                // input stage bias, adds 2nd harmonic warmth alongside 3rd.
                 let s = self.held[ch];
-                let adc_out = s + s * s * s * 0.02 + s.abs() * s * 0.001;
+                let adc_out = s - s * s * s * 0.018 + s * s.abs() * 0.008;
 
-                // ── Bit crush with noise shaping ─────────────────────
-                let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
+                // ── TPDF dither + bit crush ───────────────────────────
+                // Two rectangular noises summed = triangular distribution (TPDF).
+                // Dithers at ±1 LSB before quantisation — prevents harsh
+                // quantisation of quiet signals, smooth fade into noise floor.
+                let levels = (2.0_f32).powf(bit_depth_smooth - 1.0);
+                let dither = (lcg_rand(&mut self.rng_state) + lcg_rand(&mut self.rng_state))
+                    * (0.5 / levels);
+                let mut wet = crush_shaped(adc_out + dither, bit_depth_smooth, &mut self.quant_error[ch]);
 
-                // ── Reconstruction filter (machine character, independent of AA) ──
-                // Fully open at max Hz; sweep down to add machine bandwidth coloring.
+                // ── Reconstruction filter (machine character) ─────────
                 wet = self.filter.process(wet, ch, poles);
 
-                // ── DAC reconstruction (one-pole IIR smoothing) ──────────
-                self.prev_dac[ch] = 0.7 * wet + 0.3 * self.prev_dac[ch];
+                // ── DAC output stage (after filter, light one-pole) ───
+                // Models output capacitor on the analog output stage.
+                // Moved post-filter and lightened (0.12 → fc ≈ 33kHz at 44.1kHz)
+                // so it no longer competes with the reconstruction filter.
+                self.prev_dac[ch] = 0.88 * wet + 0.12 * self.prev_dac[ch];
                 wet = self.prev_dac[ch];
 
-                // ── Dry/wet ────────────────────────────────────────────────
+                // ── DC block (~15 Hz HPF) ─────────────────────────────
+                // Removes DC offset accumulated from asymmetric ADC nonlinearity.
+                let dc_in = wet;
+                wet = dc_in - self.dc_x[ch] + dc_r * self.dc_y[ch];
+                self.dc_x[ch] = dc_in;
+                self.dc_y[ch] = wet;
+
+                // ── Pink noise floor (~-88 dBFS) ─────────────────────
+                // One-pole 1/f filter on white noise — warmer than raw white,
+                // matches the transformer + op-amp hiss of vintage hardware.
+                let white = lcg_rand(&mut self.rng_state);
+                self.pink_state[ch] = 0.99765 * self.pink_state[ch] + white * 0.0555179;
+                wet += self.pink_state[ch] * 0.000035;
+
+                // ── Dry/wet ───────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;
                 *sample = if output.is_finite() { output } else { dry };
 
-                // ── Feed audio analyzer ────────────────────────────────────
+                // ── Feed audio analyzer ───────────────────────────────
                 self.audio_feed.push_sample(output, ch);
             }
         }
