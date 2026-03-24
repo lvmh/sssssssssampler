@@ -200,16 +200,18 @@ impl AsciiImageDisplay {
                 // Log-scaled drag for frequency-domain parameter
                 let log_start = (start_val / 1000.0).max(0.001).ln();
                 let speed = velocity_shaped(delta, 0.0012) * (start_val / 1000.0).max(0.5);
-                let new_val = ((log_start + speed).exp() * 1000.0).clamp(1000.0, 96000.0);
+                let new_val = ((log_start + speed).exp() * 1000.0).clamp(4000.0, 44_100.0);
                 setter.begin_set_parameter(&self.params.target_sr);
                 setter.set_parameter(&self.params.target_sr, new_val);
                 setter.end_set_parameter(&self.params.target_sr);
             }
             UiRow::Filter => {
-                // Smooth sweep feel with reduced sensitivity
-                let adj = velocity_shaped(delta, 0.001);
+                // Log-scaled drag matching SR feel — equal knob travel per octave
+                let log_start = (start_val / 1000.0).max(0.0001).ln();
+                let speed = velocity_shaped(delta, 0.0012) * (start_val / 1000.0).max(0.1);
+                let new_val = ((log_start + speed).exp() * 1000.0).clamp(200.0, 22_050.0);
                 setter.begin_set_parameter(&self.params.filter_cutoff);
-                setter.set_parameter(&self.params.filter_cutoff, (start_val + adj).clamp(0.01, 1.0));
+                setter.set_parameter(&self.params.filter_cutoff, new_val);
                 setter.end_set_parameter(&self.params.filter_cutoff);
             }
             UiRow::BitDepth => {
@@ -435,7 +437,8 @@ impl AsciiImageDisplay {
 
         // ── Filter (row 4) ──
         {
-            let filter_str = format!("filter: {:.0}%", self.params.filter_cutoff.value() * 100.0);
+            let fc = self.params.filter_cutoff.value();
+            let filter_str = if fc >= 1000.0 { format!("filter: {:.1}k", fc / 1000.0) } else { format!("filter: {:.0}", fc) };
             self.draw_row(canvas, fid, &filter_str, ROW_FILTER, menu_color(ROW_FILTER, energy_alpha), font_size, cell_w, cell_h, offset_x, offset_y, row_wave(1));
         }
 

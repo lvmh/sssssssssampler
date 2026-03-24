@@ -430,12 +430,10 @@ impl Plugin for Sssssssssampler {
             if self.drift_phase > 1.0 { self.drift_phase -= 1.0; }
             let drift = (self.drift_phase * std::f32::consts::TAU).sin() * 0.0005;
 
-            // ── Anti-alias pre-filter — always tracks target SR Nyquist.
-            // Applied on 4-pole+ machines always (hardware behavior).
-            // Applied on 2-pole machines only when anti_alias_enabled (SP-1200 had no AA
-            // by default; enabling it adds modern alias suppression).
-            let apply_aa = poles >= 4 || anti_alias_enabled;
-            if apply_aa {
+            // ── Anti-alias pre-filter — controlled entirely by AA toggle.
+            // Pole count only affects the reconstruction filter character;
+            // AA toggle gives the user full control over aliasing on any machine.
+            if anti_alias_enabled {
                 let aa_fc = (step * 0.9).min(0.99);
                 self.pre_filter.update(aa_fc, 0.7071);
             }
@@ -445,10 +443,10 @@ impl Plugin for Sssssssssampler {
                 let dry = *sample;
 
                 // ── Anti-alias pre-filter (before S&H, tracks target SR Nyquist) ──
-                let input = if apply_aa {
+                let input = if anti_alias_enabled {
                     self.pre_filter.process(dry, ch)
                 } else {
-                    dry // SP-1200/SP-12 style: no AA = aliasing artifacts stay in
+                    dry // AA off = raw aliasing regardless of machine type
                 };
 
                 // ── Sample-and-hold with clock drift + jitter ────────
