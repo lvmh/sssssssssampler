@@ -28,6 +28,7 @@ struct Sssssssssampler {
     quant_error: [f32; 2],   // noise-shaping error per channel
     prev_dac: [f32; 2],      // DAC reconstruction previous sample
     pre_filter: BiquadState, // pre-sampling anti-alias filter
+    rng_state: u64,          // persistent LCG state — must not reset per-block
 }
 
 impl Default for Sssssssssampler {
@@ -46,6 +47,7 @@ impl Default for Sssssssssampler {
             quant_error: [0.0; 2],
             prev_dac: [0.0; 2],
             pre_filter: BiquadState::new(),
+            rng_state: 0x123456789ABCDEF,
         }
     }
 }
@@ -290,9 +292,9 @@ impl FilterState {
     fn update(&mut self, step: f32, cutoff: f32, poles: i32) {
         let fc = (step * cutoff).min(0.99);
         if poles >= 6 {
-            // 6th-order Butterworth: Q values for 3 biquad sections
+            // 6th-order Butterworth: Q = 1/(2·sin(kπ/12)) for k = 1, 3, 5
             self.stage1.update(fc, 1.9319);
-            self.stage2.update(fc, 1.0000);
+            self.stage2.update(fc, 0.7071);
             self.stage3.update(fc, 0.5176);
         } else if poles >= 4 {
             self.stage1.update(fc, 1.3066);
@@ -383,6 +385,7 @@ impl Plugin for Sssssssssampler {
         self.drift_phase = 0.0;
         self.quant_error = [0.0; 2];
         self.prev_dac = [0.0; 2];
+        self.rng_state = 0x123456789ABCDEF;
     }
 
     fn process(
@@ -392,21 +395,22 @@ impl Plugin for Sssssssssampler {
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let host_sr = self.sample_rate;
-        let mut rng_state: u64 = 0x123456789ABCDEF;
 
         // Pole count is discrete — read once per block, not per sample.
         let poles = self.params.filter_poles.value().round() as i32;
         if poles != self.last_filter_poles {
             self.filter.reset();
+            self.pre_filter.reset();
             self.last_filter_poles  = poles;
             self.last_filter_step   = -1.0;
             self.last_filter_cutoff = -1.0;
         }
 
         // Collect current parameter values for audio feed
-        let target_sr     = self.params.target_sr.value();
-        let bit_depth     = self.params.bit_depth.value();
-        let jitter        = self.params.jitter.value();
+        let target_sr          = self.params.target_sr.value();
+        let bit_depth          = self.params.bit_depth.value();
+        let jitter             = self.params.jitter.value();
+        let anti_alias_enabled = self.params.anti_alias.value();
 
         for channel_samples in buffer.iter_samples() {
             let target_sr_smooth  = self.params.target_sr.smoothed.next();
@@ -417,13 +421,22 @@ impl Plugin for Sssssssssampler {
 
             let step = (target_sr_smooth / host_sr).min(1.0);
 
-            // Lazy coefficient update when SR or cutoff shifts meaningfully.
+            // When anti-alias is ON and the user's cutoff is fully open, cap at 0.95
+            // so the reconstruction filter still suppresses aliasing just below Nyquist.
+            // When cutoff < 1.0 the user's explicit setting takes priority.
+            let effective_cutoff = if anti_alias_enabled && filter_cutoff >= 1.0 {
+                0.95
+            } else {
+                filter_cutoff
+            };
+
+            // Lazy coefficient update when SR or effective cutoff shifts meaningfully.
             if (step - self.last_filter_step).abs() > 0.0002
-                || (filter_cutoff - self.last_filter_cutoff).abs() > 0.001
+                || (effective_cutoff - self.last_filter_cutoff).abs() > 0.001
             {
-                self.filter.update(step, filter_cutoff, poles);
+                self.filter.update(step, effective_cutoff, poles);
                 self.last_filter_step   = step;
-                self.last_filter_cutoff = filter_cutoff;
+                self.last_filter_cutoff = effective_cutoff;
             }
 
             // ── Clock drift (slow LFO ~0.3 Hz) ──────────────────────
@@ -453,7 +466,7 @@ impl Plugin for Sssssssssampler {
                     self.phase[ch] -= 1.0;
                     self.held[ch] = input;
                 }
-                let jitter_noise = lcg_rand(&mut rng_state);
+                let jitter_noise = lcg_rand(&mut self.rng_state);
                 let jitter_amount = jitter_smooth * step * 0.003 * jitter_noise;
                 self.phase[ch] += step * (1.0 + drift) + jitter_amount;
 
@@ -465,25 +478,16 @@ impl Plugin for Sssssssssampler {
                 let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
 
                 // ── Reconstruction filter ──────────────────────────────────
-                let anti_alias_enabled = self.params.anti_alias.value();
-
-                // Apply filter normally if user is controlling it (cutoff < 100%)
-                if filter_cutoff < 1.0 {
-                    wet = self.filter.process(wet, ch, poles);
-                } else if anti_alias_enabled {
-                    // At 100% cutoff with anti-aliasing ON, apply gentle filtering at Nyquist
-                    // to prevent aliasing (use ~0.95 effective cutoff)
-                    let gentle_cutoff = 0.95;
-                    let gentle_step = (target_sr_smooth / host_sr).min(1.0);
-                    self.filter.update(gentle_step, gentle_cutoff, poles);
+                // effective_cutoff < 1.0 whenever the user sweeps the filter or
+                // anti_alias is ON (capped at 0.95). When fully open and anti_alias
+                // is OFF, no filter is applied — raw aliasing.
+                if effective_cutoff < 1.0 {
                     wet = self.filter.process(wet, ch, poles);
                 }
-                // If anti_alias is OFF and cutoff is 100%, no filter applied (raw aliasing)
 
-                // ── DAC reconstruction (smoothing + transient emphasis) ───
-                let dac_out = 0.7 * wet + 0.3 * self.prev_dac[ch];
-                wet = dac_out + (wet - self.prev_dac[ch]) * 0.1;
-                self.prev_dac[ch] = dac_out;
+                // ── DAC reconstruction (one-pole IIR smoothing) ──────────
+                self.prev_dac[ch] = 0.7 * wet + 0.3 * self.prev_dac[ch];
+                wet = self.prev_dac[ch];
 
                 // ── Dry/wet ────────────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;
