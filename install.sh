@@ -19,6 +19,11 @@ codesign -s - --force --deep ~/Library/Audio/Plug-Ins/VST3/sssssssssampler.vst3
 codesign -s - --force --deep ~/Library/Audio/Plug-Ins/CLAP/sssssssssampler.clap
 
 echo "→ clearing Ableton plugin cache..."
-rm -f "$HOME/Library/Preferences/Ableton/Live 12.3.6/PluginScanDb.txt"
+for db in "$HOME/Library/Preferences/Ableton/Live "*/PluginScanDb.txt; do
+    [ -f "$db" ] && rm -f "$db"
+done
+
+# Copy the standalone installer into the bundle folder so it's included in release zips
+cp installer.sh target/bundled/install.sh
 
 echo "✓ done — relaunch Ableton"
