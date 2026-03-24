@@ -701,7 +701,8 @@ impl Model for EditorData {
 
                     // ── Read DSP params ──
                     // Visual filter remap: 0-0.3 dramatic, 0.3-0.7 sweet spot, 0.7-1.0 subtle
-                    let filter_raw = self.params.filter_cutoff.value();
+                    // filter_cutoff param is in Hz (200–22050); normalize to [0,1] first.
+                    let filter_raw = ((self.params.filter_cutoff.value() - 200.0) / (22_050.0 - 200.0)).clamp(0.0, 1.0);
                     let filter_val = if filter_raw < 0.3 {
                         filter_raw * 0.5 / 0.3
                     } else if filter_raw < 0.7 {
@@ -2015,9 +2016,9 @@ impl EditorData {
         setter.set_parameter(&self.params.filter_poles, p.poles);
         setter.end_set_parameter(&self.params.filter_poles);
 
-        // Cutoff always 100% on preset change — user can sweep from there
+        // Cutoff fully open on preset change — user can sweep from there
         setter.begin_set_parameter(&self.params.filter_cutoff);
-        setter.set_parameter(&self.params.filter_cutoff, 1.0);
+        setter.set_parameter(&self.params.filter_cutoff, 22_050.0);
         setter.end_set_parameter(&self.params.filter_cutoff);
     }
 }
