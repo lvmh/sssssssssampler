@@ -30,6 +30,7 @@ struct Sssssssssampler {
     pink_state: [f32; 2],    // one-pole pink noise filter state per channel
     dc_x: [f32; 2],          // DC blocker: previous input sample
     dc_y: [f32; 2],          // DC blocker: previous output sample
+    jitter_walk: [f32; 2],   // correlated (Brownian) clock jitter state per channel
     rng_state: u64,          // persistent LCG state — must not reset per-block
 }
 
@@ -51,6 +52,7 @@ impl Default for Sssssssssampler {
             pink_state: [0.0; 2],
             dc_x: [0.0; 2],
             dc_y: [0.0; 2],
+            jitter_walk: [0.0; 2],
             rng_state: 0x123456789ABCDEF,
         }
     }
@@ -390,6 +392,7 @@ impl Plugin for Sssssssssampler {
         self.pink_state = [0.0; 2];
         self.dc_x = [0.0; 2];
         self.dc_y = [0.0; 2];
+        self.jitter_walk = [0.0; 2];
         self.rng_state = 0x123456789ABCDEF;
     }
 
@@ -477,16 +480,28 @@ impl Plugin for Sssssssssampler {
                 }
                 // Capacitor droop: held charge leaks every sample
                 self.held[ch] *= droop;
-                let jitter_noise = lcg_rand(&mut self.rng_state);
-                let jitter_amount = jitter_smooth * step * 0.003 * jitter_noise;
+                // Correlated (Brownian) jitter — random walk with ~15ms correlation time.
+                // Real crystal oscillators wander rather than jumping: each sample's
+                // phase error is correlated with the previous one. α=0.9985 gives a
+                // 3dB point at ~10Hz (1/(2π·667 samples at 44.1kHz)).
+                // Scale 0.000164 = 0.003/18.26 normalises walk σ to match old amplitude.
+                self.jitter_walk[ch] = 0.9985 * self.jitter_walk[ch]
+                    + lcg_rand(&mut self.rng_state);
+                let jitter_amount = jitter_smooth * step * 0.000164 * self.jitter_walk[ch];
                 self.phase[ch] += step * (1.0 + drift) + jitter_amount;
 
                 // ── ADC nonlinearity — asymmetric soft-clip ───────────
-                // Negative cubic term = soft clipping (not expansion).
-                // s·|s| term is asymmetric (even harmonic) — models transistor
-                // input stage bias, adds 2nd harmonic warmth alongside 3rd.
+                // Cubic term = odd-harmonic soft-clip (3rd harmonic grit).
+                // s·|s| term = even-harmonic asymmetry (2nd harmonic warmth).
+                // Amounts are machine-specific: SP-1200 (2-pole) is famously
+                // saturated; S950 (6-pole) was designed to be comparatively clean.
                 let s = self.held[ch];
-                let adc_out = s - s * s * s * 0.018 + s * s.abs() * 0.008;
+                let (sat_cubic, sat_even) = match poles {
+                    p if p >= 6 => (0.010, 0.004), // S950: clean, surgical
+                    p if p >= 4 => (0.018, 0.008), // MPC/SP-303: reference warmth
+                    _           => (0.028, 0.015), // SP-1200: crunchy, saturated
+                };
+                let adc_out = s - s * s * s * sat_cubic + s * s.abs() * sat_even;
 
                 // ── TPDF dither + bit crush ───────────────────────────
                 // Two rectangular noises summed = triangular distribution (TPDF).
