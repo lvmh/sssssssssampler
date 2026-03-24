@@ -779,18 +779,17 @@ impl Model for EditorData {
                     let t = self.anim_tick as f32;
 
                     // ── PHASE 1: Sample Rate → Temporal Quantization ──
-                    let target_sr = self.params.target_sr.value(); // 1000–96000 Hz
-                    // V6: Custom SR effect curve
-                    // 96k-48k → 0-20% effect, 48k-38k → 20-40%, 38k-1k → 40-100%
-                    let sr_effect = if target_sr >= 48_000.0 {
-                        let t = ((96_000.0 - target_sr) / 48_000.0).clamp(0.0, 1.0);
-                        t * 0.20
-                    } else if target_sr >= 38_000.0 {
-                        let t = ((48_000.0 - target_sr) / 10_000.0).clamp(0.0, 1.0);
-                        0.20 + t * 0.20
+                    let target_sr = self.params.target_sr.value(); // 4000–48000 Hz
+                    // SR effect curve calibrated for 4,000–48,000 Hz range:
+                    // 44k–48k → 0–10% effect, 30k–44k → 10–35%, 15k–30k → 35–70%, 4k–15k → 70–100%
+                    let sr_effect = if target_sr >= 44_000.0 {
+                        (48_000.0 - target_sr) / 40_000.0
+                    } else if target_sr >= 30_000.0 {
+                        0.10 + (44_000.0 - target_sr) / 56_000.0
+                    } else if target_sr >= 15_000.0 {
+                        0.35 + (30_000.0 - target_sr) / 42_857.0
                     } else {
-                        let t = ((38_000.0 - target_sr) / 37_000.0).clamp(0.0, 1.0);
-                        0.40 + t * 0.60
+                        0.70 + (15_000.0 - target_sr) / 27_500.0
                     };
                     let sr_norm = 1.0 - sr_effect; // invert: sr_norm=1 means no effect
                     // step_interval: 1 frame at max SR → 8 frames at min SR
@@ -1255,7 +1254,7 @@ impl Model for EditorData {
                     self.intent_release += (release_signal - self.intent_release) * 0.05;
                     self.intent_release = self.intent_release.clamp(0.0, 1.0);
                     let chaos_signal = (filter_val - self.prev_filter).abs() * 5.0
-                        + ((target_sr - self.prev_sr) / 96000.0).abs() * 5.0
+                        + ((target_sr - self.prev_sr) / 44_000.0).abs() * 5.0
                         + self.memory.fatigue * 0.5
                         + self.recent_moment_count as f32 * 0.15;
                     self.intent_chaos += (chaos_signal - self.intent_chaos) * 0.08;
@@ -1300,7 +1299,7 @@ impl Model for EditorData {
 
                         // Detect param changes for UserAccent
                         let filter_delta = (filter_val - self.prev_filter).abs();
-                        let sr_delta = ((target_sr - self.prev_sr) / 96000.0).abs();
+                        let sr_delta = ((target_sr - self.prev_sr) / 44_000.0).abs();
                         let param_spike = filter_delta > 0.1 || sr_delta > 0.05;
 
                         // Detect PEAK enter/exit

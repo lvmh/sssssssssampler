@@ -131,16 +131,17 @@ impl AudioFeed {
         self.analyzer.update_stereo(&self.buffer_l, &self.buffer_r, self.host_sr);
 
         let rms = self.analyzer.smoothed_rms();
-        let instability = sample_rate_to_instability(96_000.0);
-        let quantization = bit_depth_to_quantization(12.0);
         let layer_count = amplitude_to_layer_count(rms);
-        let region_offset = jitter_to_region_offset(0.01);
         let brightness = amplitude_to_brightness(rms);
         let motion_speed = amplitude_to_motion_speed(rms);
 
+        // Preserve instability/quantization/region_offset from the last update() call —
+        // those are computed from actual DSP params which analyze_and_update() can't access.
+        // Only audio-analysis-derived fields (rms, energy, transient, stereo) are updated here.
         let existing = self.shared_params.lock().ok()
-            .map(|p| (p.bpm, p.playing))
-            .unwrap_or((120.0, false));
+            .map(|p| (p.bpm, p.playing, p.instability, p.quantization, p.region_offset))
+            .unwrap_or((120.0, false, 0.0, 0.0, 0.01));
+        let (instability, quantization, region_offset) = (existing.2, existing.3, existing.4);
         let transient = self.analyzer.transient_active();
         let normalized_energy = self.analyzer.normalized_energy();
         let norm_rms = self.analyzer.normalized_rms();

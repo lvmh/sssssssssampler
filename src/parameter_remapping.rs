@@ -1,24 +1,23 @@
 /// Non-linear parameter remapping for audio quality perception
 
 /// Map sample rate to visual degradation intensity (0.0–1.0)
-/// Returns "instability score": 0 at high SR, 1 at very low SR
+/// Returns "instability score": 0 at high SR, 1 at very low SR.
+/// Calibrated for target_sr range 4,000–48,000 Hz.
 pub fn sample_rate_to_instability(sr_hz: f32) -> f32 {
     // Zones:
-    // 44.1kHz+: minimal (zone 1, 0.0–0.1)
-    // 30kHz–44kHz: mild (zone 2, 0.1–0.3)
-    // 15kHz–30kHz: moderate (zone 3, 0.3–0.6)
-    // <15kHz: extreme (zone 4, 0.6–1.0)
-
-    let normalized = (sr_hz / 96_000.0).clamp(0.0, 1.0);
-
-    if normalized >= 0.46 {        // ≥ 44kHz
-        (1.0 - normalized) * 0.2    // 0.0–0.1
-    } else if normalized >= 0.31 { // 30–44kHz
-        0.1 + ((0.46 - normalized) / 0.15) * 0.2 // 0.1–0.3
-    } else if normalized >= 0.16 { // 15–30kHz
-        0.3 + ((0.31 - normalized) / 0.15) * 0.3 // 0.3–0.6
-    } else {                        // <15kHz
-        0.6 + ((0.16 - normalized) / 0.16) * 0.4 // 0.6–1.0
+    // 44kHz–48kHz: minimal (0.0–0.1)
+    // 30kHz–44kHz: mild    (0.1–0.3)
+    // 15kHz–30kHz: moderate (0.3–0.6)
+    //  4kHz–15kHz: extreme  (0.6–1.0)
+    let sr = sr_hz.clamp(4_000.0, 48_000.0);
+    if sr >= 44_000.0 {
+        (48_000.0 - sr) / 40_000.0            // 0.0 at 48kHz → 0.1 at 44kHz
+    } else if sr >= 30_000.0 {
+        0.1 + (44_000.0 - sr) / 56_000.0      // 0.1 at 44kHz → 0.3 at 30kHz
+    } else if sr >= 15_000.0 {
+        0.3 + (30_000.0 - sr) / 42_857.0      // 0.3 at 30kHz → 0.6 at 15kHz
+    } else {
+        0.6 + (15_000.0 - sr) / 27_500.0      // 0.6 at 15kHz → 1.0 at 4kHz
     }
 }
 
