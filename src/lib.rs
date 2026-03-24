@@ -289,8 +289,8 @@ impl FilterState {
         }
     }
 
-    fn update(&mut self, step: f32, cutoff: f32, poles: i32) {
-        let fc = (step * cutoff).min(0.99);
+    fn update(&mut self, cutoff: f32, poles: i32) {
+        let fc = cutoff.clamp(0.001, 0.99);
         if poles >= 6 {
             // 6th-order Butterworth: Q = 1/(2·sin(kπ/12)) for k = 1, 3, 5
             self.stage1.update(fc, 1.9319);
@@ -421,11 +421,11 @@ impl Plugin for Sssssssssampler {
 
             let step = (target_sr_smooth / host_sr).min(1.0);
 
-            // When anti-alias is ON and the user's cutoff is fully open, cap at 0.95
-            // so the reconstruction filter still suppresses aliasing just below Nyquist.
-            // When cutoff < 1.0 the user's explicit setting takes priority.
-            let effective_cutoff = if anti_alias_enabled && filter_cutoff >= 1.0 {
-                0.95
+            // When anti-alias is ON, cap at 0.95 of target Nyquist to suppress
+            // fold-back right at the Nyquist boundary. User's cutoff takes priority
+            // when sweeping below that point.
+            let effective_cutoff = if anti_alias_enabled {
+                filter_cutoff.min(0.95)
             } else {
                 filter_cutoff
             };
@@ -434,7 +434,7 @@ impl Plugin for Sssssssssampler {
             if (step - self.last_filter_step).abs() > 0.0002
                 || (effective_cutoff - self.last_filter_cutoff).abs() > 0.001
             {
-                self.filter.update(step, effective_cutoff, poles);
+                self.filter.update(effective_cutoff, poles);
                 self.last_filter_step   = step;
                 self.last_filter_cutoff = effective_cutoff;
             }
@@ -478,12 +478,11 @@ impl Plugin for Sssssssssampler {
                 let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
 
                 // ── Reconstruction filter ──────────────────────────────────
-                // effective_cutoff < 1.0 whenever the user sweeps the filter or
-                // anti_alias is ON (capped at 0.95). When fully open and anti_alias
-                // is OFF, no filter is applied — raw aliasing.
-                if effective_cutoff < 1.0 {
-                    wet = self.filter.process(wet, ch, poles);
-                }
+                // Always applied. At filter_cutoff = 1.0, fc = step × 1.0 = target
+                // Nyquist, which is transparent for the processed signal (S&H cannot
+                // produce meaningful content above its own Nyquist). Sweeping down
+                // from there adds machine filter character continuously, no cliff.
+                wet = self.filter.process(wet, ch, poles);
 
                 // ── DAC reconstruction (one-pole IIR smoothing) ──────────
                 self.prev_dac[ch] = 0.7 * wet + 0.3 * self.prev_dac[ch];
