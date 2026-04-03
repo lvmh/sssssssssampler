@@ -535,6 +535,16 @@ pub struct EditorData {
     pub intent_mode_t: f32,
     #[lens(ignore)]
     pub intent_mode_bars: f32,
+    // ── Braille effects ──
+    #[lens(ignore)]
+    pub spark_frames: u32,
+    #[lens(ignore)]
+    pub ring_frames: u32,
+    // ── Musical transitions ──
+    #[lens(ignore)]
+    pub transition_kind: u8,
+    #[lens(ignore)]
+    pub prev_core_cycle: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -781,6 +791,19 @@ impl Model for EditorData {
                     let dust_tick = self.frame_update_counter as u32;
                     self.quant_frame = self.quant_frame.wrapping_add(1);
 
+                    // Braille spark burst: set on transient, decay each frame
+                    if transient && energy > 0.15 {
+                        self.spark_frames = 8;
+                    } else if self.spark_frames > 0 {
+                        self.spark_frames -= 1;
+                    }
+                    // Beat ring pulse: triggered on transient, expands over 20 frames
+                    if transient && energy > 0.15 {
+                        self.ring_frames = 20;
+                    } else if self.ring_frames > 0 {
+                        self.ring_frames -= 1;
+                    }
+
                     if playing {
                         self.anim_tick = self.anim_tick.wrapping_add(1);
                     }
@@ -893,6 +916,22 @@ impl Model for EditorData {
                         (ci, (ph as usize) % img_count)
                     };
 
+                    // Musical transition kind — selected once per cycle at the moment of switch
+                    if core_cycle != self.prev_core_cycle {
+                        let base = (core_cycle as u32).wrapping_mul(2246822507) >> 28; // 0..15
+                        let forced = transient && energy > 0.60;
+                        self.transition_kind = if forced {
+                            if (base & 1) == 0 { 6 } else { 7 }
+                        } else {
+                            match signal_class {
+                                0 => [2u8, 3, 7, 3, 2, 7, 1, 3][base as usize % 8], // percussive
+                                2 => [0u8, 8, 5, 8, 5, 0, 8, 5][base as usize % 8], // ambient
+                                _ => [1u8, 4, 0, 5, 8, 1, 4, 0][base as usize % 8], // tonal
+                            }
+                        };
+                        self.prev_core_cycle = core_cycle;
+                    }
+
                     // Random position offset for small core images
                     let core_w = if core_img < img_count { self.ascii_bank.images[core_img].grid.width as i32 } else { COLS as i32 };
                     let core_h = if core_img < img_count { self.ascii_bank.images[core_img].grid.height as i32 } else { ROWS as i32 };
@@ -939,18 +978,25 @@ impl Model for EditorData {
                     };
                     let rebel_roll = ((core_cycle as u32).wrapping_mul(2654435761) >> 24) as f32 / 255.0;
                     let (core_col_off, core_row_off) = if rebel_roll < 0.05 {
-                        // 5% chance: no clamping — raw offset, image can drift anywhere
+                        // 5% chance: no clamping — image can drift anywhere (intentional chaos)
                         (raw_col_off, raw_row_off)
-                    } else if core_w >= COLS as i32 && core_h >= ROWS as i32 {
-                        // Large image: clamp to always fill viewport
-                        (raw_col_off.clamp(0, (core_w - COLS as i32).max(0)),
-                         raw_row_off.clamp(0, (core_h - ROWS as i32).max(0)))
                     } else {
-                        // Small image: keep 80% visible
-                        let min_vis_c = (core_w * 80 / 100).max(1);
-                        let min_vis_r = (core_h * 80 / 100).max(1);
-                        (raw_col_off.clamp(-(core_w - min_vis_c), COLS as i32 - min_vis_c),
-                         raw_row_off.clamp(-(core_h - min_vis_r), ROWS as i32 - min_vis_r))
+                        // Handle each axis independently:
+                        //   image >= viewport → pan within image (always fills that axis)
+                        //   image < viewport  → center with tight ±8 col / ±6 row drift
+                        let col_off = if core_w >= COLS as i32 {
+                            raw_col_off.clamp(0, core_w - COLS as i32)
+                        } else {
+                            let center = (COLS as i32 - core_w) / 2;
+                            raw_col_off.clamp(center - 8, center + 8)
+                        };
+                        let row_off = if core_h >= ROWS as i32 {
+                            raw_row_off.clamp(0, core_h - ROWS as i32)
+                        } else {
+                            let center = (ROWS as i32 - core_h) / 2;
+                            raw_row_off.clamp(center - 6, center + 6)
+                        };
+                        (col_off, row_off)
                     };
 
                     // ── Transition with directional wave bias ──
@@ -1502,14 +1548,95 @@ impl Model for EditorData {
                             let base_raw = if in_base_margin || src_row >= core_h as usize {
                                 0.0
                             } else if in_transition {
-                                // V2: wave-biased scatter-dissolve
+                                // Musical transition — kind selected per-cycle from signal class + energy
                                 let dissolve_hash = col.wrapping_mul(48271)
                                     .wrapping_add(row.wrapping_mul(1103515245))
                                     .wrapping_add(core_cycle as u32 * 2654435761);
                                 let dissolve_val = ((dissolve_hash >> 16) & 0xFF) as f32 / 255.0;
-                                // Direction bias: wave sweeps across rows
-                                let bias = (ru as f32 * 0.15 + t * 0.02).sin() * 0.2;
-                                let threshold = (transition_progress + bias).clamp(0.0, 1.0);
+                                let threshold = match self.transition_kind {
+                                    // 0: Wave dissolve — row sine sweep (original)
+                                    0 => {
+                                        let bias = (ru as f32 * 0.15 + t * 0.02).sin() * 0.2;
+                                        (transition_progress + bias).clamp(0.0, 1.0)
+                                    }
+                                    // 1: Radial burst — center dissolves first, erupts outward
+                                    1 => {
+                                        let dx = cu as f32 - COLS as f32 * 0.5;
+                                        let dy = ru as f32 - ROWS as f32 * 0.5;
+                                        let dist = (dx * dx + dy * dy).sqrt();
+                                        let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                        let bias = 0.35 * (1.0 - dist / max_dist);
+                                        (transition_progress + bias).clamp(0.0, 1.0)
+                                    }
+                                    // 2: Radial implode — edges dissolve first, center last
+                                    2 => {
+                                        let dx = cu as f32 - COLS as f32 * 0.5;
+                                        let dy = ru as f32 - ROWS as f32 * 0.5;
+                                        let dist = (dx * dx + dy * dy).sqrt();
+                                        let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                        let bias = 0.35 * (dist / max_dist);
+                                        (transition_progress + bias).clamp(0.0, 1.0)
+                                    }
+                                    // 3: Column rain — left-to-right cascade with BPM shimmer
+                                    3 => {
+                                        let col_phase = cu as f32 / COLS as f32;
+                                        let beat_shimmer = (t / ticks_per_bar * std::f32::consts::TAU).sin() * 0.05 * energy;
+                                        let bias = col_phase * 0.45 - 0.22 + beat_shimmer;
+                                        (transition_progress + bias).clamp(0.0, 1.0)
+                                    }
+                                    // 4: Diagonal wipe — alternates TL→BR / BR→TL per cycle
+                                    4 => {
+                                        let forward = (core_cycle & 1) == 0;
+                                        let diag = if forward {
+                                            (cu as f32 / COLS as f32 + ru as f32 / ROWS as f32) * 0.5
+                                        } else {
+                                            1.0 - (cu as f32 / COLS as f32 + ru as f32 / ROWS as f32) * 0.5
+                                        };
+                                        (transition_progress + (diag - 0.5) * 0.5).clamp(0.0, 1.0)
+                                    }
+                                    // 5: Density-weighted — denser old chars linger longest
+                                    5 => {
+                                        let cell_density = self.ascii_bank.get_cell(prev_core_img, bank_col_base, src_row) as f32
+                                            / (ASCII_CHARSET_LEN as f32 - 1.0);
+                                        let density_bias = cell_density * 0.30 - 0.10;
+                                        (transition_progress - density_bias).clamp(0.0, 1.0)
+                                    }
+                                    // 6: Corruption snap — chaotic mid-transition flicker
+                                    6 => {
+                                        let flicker_h = dissolve_hash.wrapping_add(self.anim_tick as u32 * 48271);
+                                        let flicker = ((flicker_h >> 8) & 0xFF) as f32 / 255.0;
+                                        if transition_progress < 0.25 {
+                                            (transition_progress * 4.0 * flicker).clamp(0.0, 1.0)
+                                        } else if transition_progress > 0.75 {
+                                            (transition_progress * 2.0 - 0.5).clamp(0.0, 1.0)
+                                        } else {
+                                            if flicker < (transition_progress - 0.25) * 2.0 { 1.0 } else { 0.0 }
+                                        }
+                                    }
+                                    // 7: Row stagger snap — each row hard-cuts at its own random time
+                                    7 => {
+                                        let row_hash = row.wrapping_mul(2654435761)
+                                            .wrapping_add(core_cycle as u32 * 48271);
+                                        let row_snap_t = ((row_hash >> 16) & 0xFF) as f32 / 255.0 * 0.85;
+                                        if transition_progress >= row_snap_t { 1.0 } else { 0.0 }
+                                    }
+                                    // 8: Spiral — Archimedes spiral outward from center
+                                    8 => {
+                                        let dx = cu as f32 - COLS as f32 * 0.5;
+                                        let dy = ru as f32 - ROWS as f32 * 0.5;
+                                        let angle = dy.atan2(dx);
+                                        let dist = (dx * dx + dy * dy).sqrt();
+                                        let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                        let norm_angle = angle / std::f32::consts::TAU + 0.5;
+                                        let spiral = (norm_angle + dist / max_dist * 0.5) % 1.0;
+                                        (transition_progress + (spiral - 0.5) * 0.45).clamp(0.0, 1.0)
+                                    }
+                                    // fallback: wave
+                                    _ => {
+                                        let bias = (ru as f32 * 0.15 + t * 0.02).sin() * 0.2;
+                                        (transition_progress + bias).clamp(0.0, 1.0)
+                                    }
+                                };
                                 if dissolve_val < threshold {
                                     self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32
                                 } else {
@@ -1566,14 +1693,83 @@ impl Model for EditorData {
                                     let shifted_col = cu as i32 + smeared_col - slot.img_col_offset;
                                     if shifted_col < 0 { continue; }
 
-                                    // Scatter-dissolve between old and new overlay image
+                                    // Musical dissolve between old and new overlay image
                                     let raw = if slot.transition_t < 1.0 {
                                         let dh = col.wrapping_mul(31337)
                                             .wrapping_add(row.wrapping_mul(48271))
                                             .wrapping_add(si as u32 * 7919);
                                         let dv = ((dh >> 16) & 0xFF) as f32 / 255.0;
-                                        let sharp_t = (slot.transition_t * transition_sharpness).min(1.0);
-                                        if dv < sharp_t {
+                                        // ov_t: sharpness-scaled progress (percussive=fast, ambient=slow)
+                                        let ov_t = (slot.transition_t * transition_sharpness).min(1.0);
+                                        let ov_threshold = match self.transition_kind {
+                                            0 => { // Wave
+                                                let bias = (ru as f32 * 0.15 + t * 0.02).sin() * 0.2;
+                                                (ov_t + bias).clamp(0.0, 1.0)
+                                            }
+                                            1 => { // Radial burst — center first
+                                                let dx = cu as f32 - COLS as f32 * 0.5;
+                                                let dy = ru as f32 - ROWS as f32 * 0.5;
+                                                let dist = (dx * dx + dy * dy).sqrt();
+                                                let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                                (ov_t + 0.35 * (1.0 - dist / max_dist)).clamp(0.0, 1.0)
+                                            }
+                                            2 => { // Radial implode — edges first
+                                                let dx = cu as f32 - COLS as f32 * 0.5;
+                                                let dy = ru as f32 - ROWS as f32 * 0.5;
+                                                let dist = (dx * dx + dy * dy).sqrt();
+                                                let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                                (ov_t + 0.35 * (dist / max_dist)).clamp(0.0, 1.0)
+                                            }
+                                            3 => { // Column rain
+                                                let col_phase = cu as f32 / COLS as f32;
+                                                let beat_shimmer = (t / ticks_per_bar * std::f32::consts::TAU).sin() * 0.05 * energy;
+                                                (ov_t + col_phase * 0.45 - 0.22 + beat_shimmer).clamp(0.0, 1.0)
+                                            }
+                                            4 => { // Diagonal
+                                                let forward = (core_cycle & 1) == 0;
+                                                let diag = if forward {
+                                                    (cu as f32 / COLS as f32 + ru as f32 / ROWS as f32) * 0.5
+                                                } else {
+                                                    1.0 - (cu as f32 / COLS as f32 + ru as f32 / ROWS as f32) * 0.5
+                                                };
+                                                (ov_t + (diag - 0.5) * 0.5).clamp(0.0, 1.0)
+                                            }
+                                            5 => { // Density-weighted — dense old chars linger
+                                                let cell_density = self.ascii_bank.get_cell(slot.prev_img_idx, shifted_col as usize, r2) as f32
+                                                    / (ASCII_CHARSET_LEN as f32 - 1.0);
+                                                (ov_t - (cell_density * 0.30 - 0.10)).clamp(0.0, 1.0)
+                                            }
+                                            6 => { // Corruption snap — chaotic mid-transition
+                                                let flicker_h = dh.wrapping_add(self.anim_tick as u32 * 48271);
+                                                let flicker = ((flicker_h >> 8) & 0xFF) as f32 / 255.0;
+                                                if ov_t < 0.25 {
+                                                    (ov_t * 4.0 * flicker).clamp(0.0, 1.0)
+                                                } else if ov_t > 0.75 {
+                                                    (ov_t * 2.0 - 0.5).clamp(0.0, 1.0)
+                                                } else {
+                                                    if flicker < (ov_t - 0.25) * 2.0 { 1.0 } else { 0.0 }
+                                                }
+                                            }
+                                            7 => { // Row stagger snap — per slot+row
+                                                let row_hash = row.wrapping_mul(2654435761)
+                                                    .wrapping_add(si as u32 * 48271)
+                                                    .wrapping_add(core_cycle as u32 * 1234567);
+                                                let row_snap_t = ((row_hash >> 16) & 0xFF) as f32 / 255.0 * 0.85;
+                                                if ov_t >= row_snap_t { 1.0 } else { 0.0 }
+                                            }
+                                            8 => { // Spiral
+                                                let dx = cu as f32 - COLS as f32 * 0.5;
+                                                let dy = ru as f32 - ROWS as f32 * 0.5;
+                                                let angle = dy.atan2(dx);
+                                                let dist = (dx * dx + dy * dy).sqrt();
+                                                let max_dist = ((COLS as f32 * 0.5_f32).powi(2) + (ROWS as f32 * 0.5_f32).powi(2)).sqrt();
+                                                let norm_angle = angle / std::f32::consts::TAU + 0.5;
+                                                let spiral = (norm_angle + dist / max_dist * 0.5) % 1.0;
+                                                (ov_t + (spiral - 0.5) * 0.45).clamp(0.0, 1.0)
+                                            }
+                                            _ => ov_t
+                                        };
+                                        if dv < ov_threshold {
                                             self.ascii_bank.get_cell(slot.img_idx, shifted_col as usize, r2)
                                         } else {
                                             self.ascii_bank.get_cell(slot.prev_img_idx, shifted_col as usize, r2)
@@ -1611,7 +1807,7 @@ impl Model for EditorData {
                                         let clamped = match slot.depth {
                                             0 => raw as usize,                         // Pulse: full charset
                                             1 => (raw as usize).min(100),              // Accent: up to ▓ stipple
-                                            2 => (raw as usize).min(90),               // Drift: up to ½-blocks
+                                            2 => (raw as usize).min(103),              // Drift: up to ½-blocks
                                             _ => (raw as usize).min(55),               // Ghost: medium-weight ASCII
                                         };
                                         best_char_idx = clamped;
@@ -1751,7 +1947,7 @@ impl Model for EditorData {
                                 if in_bloom {
                                     let bloom_seed = col.wrapping_mul(31337).wrapping_add(row.wrapping_mul(7919))
                                         .wrapping_add(self.moment.seed);
-                                    let gi = 87 + ((bloom_seed >> 4) as usize % (ASCII_CHARSET_LEN - 87));
+                                    let gi = 94 + ((bloom_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
                                     final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                     // Random theme color per cell (primary + 4 secondaries)
                                     let color_pick = ((bloom_seed >> 8) % 5) as usize;
@@ -1786,9 +1982,9 @@ impl Model for EditorData {
                                     // Style-aware glyph ranges per preset
                                     let (pt_base, pt_range, cl_base, cl_range) = match self.visual_profile.glitch_style {
                                         1 => (94, 12, 94, 12),                  // h-line: block elements only
-                                        2 => (84, 30, 87, 37),                  // warped: wide range
+                                        2 => (94, ASCII_CHARSET_LEN - 94, 94, ASCII_CHARSET_LEN - 94), // warped: block/box only
                                         3 => (1, 10, 94, 6),                    // minimal: light chars + thin blocks
-                                        _ => (1, ASCII_CHARSET_LEN - 1, 87, 22), // mixed: full ASCII range
+                                        _ => (1, ASCII_CHARSET_LEN - 1, 94, ASCII_CHARSET_LEN - 94), // mixed: full ASCII range
                                     };
                                     match corruption_tier {
                                         1 => {
@@ -1801,7 +1997,7 @@ impl Model for EditorData {
                                         }
                                         _ => {
                                             // Structural: always heavy blocks
-                                            let gi = 87 + ((glitch_seed >> 4) as usize % (ASCII_CHARSET_LEN - 87));
+                                            let gi = 94 + ((glitch_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
                                             final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                         }
                                     }
@@ -1813,10 +2009,129 @@ impl Model for EditorData {
                                 }
                             }
 
-                            // Dust glyph
+                            // Braille spark burst — transient-triggered, HIGH PRIORITY: fires before dust
+                            if self.spark_frames > 0 && final_density_idx == 0 {
+                                let spark_age = (8 - self.spark_frames) as f32;
+                                let spark_hash = (cu as u32).wrapping_mul(2246822507)
+                                    .wrapping_add((ru as u32).wrapping_mul(1664525))
+                                    .wrapping_add((self.anim_tick as u32).wrapping_mul(48271));
+                                let spark_roll = ((spark_hash >> 16) & 0xFF) as f32 / 255.0;
+                                let spark_prob = energy * 0.065 * (1.0 - spark_age / 8.0);
+                                if spark_roll < spark_prob {
+                                    const SPARK_DOTS: [usize; 8] = [135, 136, 138, 142, 150, 166, 198, 262];
+                                    final_density_idx = SPARK_DOTS[(spark_hash >> 8) as usize % 8];
+                                    let fade = 1.0 - spark_age / 8.0;
+                                    let use_chart = ((spark_hash >> 20) & 1) == 0;
+                                    let sc = if use_chart { palette.chart[0] } else { palette.emphasis };
+                                    let alpha = fade * energy * 0.80;
+                                    r = r + (sc.r - r) * alpha;
+                                    g = g + (sc.g - g) * alpha;
+                                    b = b + (sc.b - b) * alpha;
+                                }
+                            }
+
+                            // Beat ring pulse — HIGH PRIORITY: fires before dust
+                            if self.ring_frames > 0 && final_density_idx == 0 {
+                                let ring_age = (20 - self.ring_frames) as f32;
+                                let ring_radius = ring_age / 20.0 * 32.0;
+                                let dist = ((cu as f32 - COLS as f32 * 0.5).powi(2) + (ru as f32 - ROWS as f32 * 0.5).powi(2)).sqrt();
+                                let dist_from_ring = (dist - ring_radius).abs();
+                                if dist_from_ring < 1.8 {
+                                    let rh = col.wrapping_mul(2246822507)
+                                        .wrapping_add(row.wrapping_mul(1664525))
+                                        .wrapping_add(self.ring_frames as u32 * 48271);
+                                    let ring_roll = ((rh >> 16) & 0xFF) as f32 / 255.0;
+                                    let ring_prob = 0.45 * (1.0 - ring_age / 20.0) * (1.0 - dist_from_ring / 1.8);
+                                    if ring_roll < ring_prob {
+                                        const RING_PATS: [usize; 6] = [137, 139, 143, 168, 199, 263];
+                                        final_density_idx = RING_PATS[(rh >> 8) as usize % 6];
+                                        let fade = 1.0 - ring_age / 20.0;
+                                        let alpha = fade * 0.55;
+                                        let rc = palette.chart[0];
+                                        r = r + (rc.r - r) * alpha;
+                                        g = g + (rc.g - g) * alpha;
+                                        b = b + (rc.b - b) * alpha;
+                                    }
+                                }
+                            }
+
+                            // Dust glyph — after transient effects so sparks/ring take priority
                             if final_density_idx == 0 && (dust_present < dust_density || dust_over_overlay) {
                                 let pick = ((dust_opacity * 6.0) as usize).min(5);
                                 final_density_idx = 1 + pick;
+                            }
+
+                            // Braille edge fringe — halftone penumbra on empty cells adjacent to content
+                            if final_density_idx == 0 && base_raw == 0.0 {
+                                let n_raw = self.ascii_bank.get_cell(core_img, bank_col_base, src_row.wrapping_sub(1));
+                                let s_raw = self.ascii_bank.get_cell(core_img, bank_col_base, src_row + 1);
+                                let e_raw = self.ascii_bank.get_cell(core_img, bank_col_base + 1, src_row);
+                                let w_raw = self.ascii_bank.get_cell(core_img, bank_col_base.wrapping_sub(1), src_row);
+                                let neighbors = (n_raw > 0) as u32 + (s_raw > 0) as u32
+                                              + (e_raw > 0) as u32 + (w_raw > 0) as u32;
+                                if neighbors > 0 {
+                                    let fh = (cu as u32).wrapping_mul(2246822507)
+                                        .wrapping_add((ru as u32).wrapping_mul(7919))
+                                        .wrapping_add((self.anim_tick as u32 / 8).wrapping_mul(1664525));
+                                    let fringe_roll = ((fh >> 16) & 0xFF) as f32 / 255.0;
+                                    let fringe_prob = neighbors as f32 * 0.22 * (0.4 + energy * 0.6);
+                                    if fringe_roll < fringe_prob {
+                                        final_density_idx = ASCII_CHARSET_LEN + 3 + ((fh >> 8) as usize % 12);
+                                        let alpha = 0.06 + neighbors as f32 * 0.04 + energy * 0.05;
+                                        let pc = palette.primary;
+                                        r = r + (pc.r - r) * alpha;
+                                        g = g + (pc.g - g) * alpha;
+                                        b = b + (pc.b - b) * alpha;
+                                    }
+                                }
+                            }
+
+                            // Braille ambient grain — film-grain texture in empty background areas
+                            if final_density_idx == 0 {
+                                let gh = (cu as u32).wrapping_mul(1013904223)
+                                    .wrapping_add((ru as u32).wrapping_mul(1664525))
+                                    .wrapping_add((self.anim_tick as u32 / 4).wrapping_mul(6364136));
+                                let grain_roll = ((gh >> 16) & 0xFF) as f32 / 255.0;
+                                let grain_prob = 0.012 + energy * 0.010;
+                                if grain_roll < grain_prob {
+                                    const GRAIN_DOTS: [usize; 8] = [135, 136, 138, 142, 150, 166, 198, 262];
+                                    final_density_idx = GRAIN_DOTS[(gh >> 8) as usize % 8];
+                                    let alpha = 0.08 + energy * 0.06;
+                                    let pc = palette.primary;
+                                    r = r + (pc.r - r) * alpha;
+                                    g = g + (pc.g - g) * alpha;
+                                    b = b + (pc.b - b) * alpha;
+                                }
+                            }
+
+                            // Vertical rain — intermittent braille drops, epoch-gated per column
+                            // Epoch (~64 dust_tick ticks ≈ 1s) controls which columns are "active".
+                            // ~30% of epochs active per column → rain appears, fades, reappears randomly.
+                            if final_density_idx == 0 && energy > 0.10 {
+                                let col_hash = col.wrapping_mul(2246822507).wrapping_add(987654321u32);
+                                let col_phase = col_hash >> 16;
+                                let epoch = dust_tick.wrapping_add(col_phase) / 64;
+                                let epoch_hash = epoch.wrapping_mul(1664525).wrapping_add(col_hash);
+                                if (epoch_hash >> 16) & 0xFF < 77 { // ~30% of epochs on
+                                    let rain_phase = (col_hash ^ epoch.wrapping_mul(48271)) >> 20;
+                                    let drop_speed = (5u32).saturating_sub((energy * 3.0) as u32).max(2);
+                                    let drop_pos = (dust_tick / drop_speed + rain_phase) % ROWS;
+                                    let dist_from_drop = (row + ROWS - drop_pos) % ROWS;
+                                    if dist_from_drop < 2 {
+                                        let roll_h = col_hash.wrapping_add(epoch.wrapping_mul(22695477));
+                                        let rain_prob = 0.30 + energy * 0.25;
+                                        if ((roll_h >> 8) & 0xFF) as f32 / 255.0 < rain_prob {
+                                            const RAIN_DOTS: [usize; 4] = [135, 136, 138, 150];
+                                            final_density_idx = RAIN_DOTS[(col_hash >> 4) as usize % 4];
+                                            let fade = 1.0 - dist_from_drop as f32 * 0.4;
+                                            let alpha = fade * (0.13 + energy * 0.14);
+                                            let rc = palette.chart[0];
+                                            r = r + (rc.r - r) * alpha;
+                                            g = g + (rc.g - g) * alpha;
+                                            b = b + (rc.b - b) * alpha;
+                                        }
+                                    }
+                                }
                             }
 
                             // V3+V4: Brightness boost (moment + phrase)
@@ -2133,6 +2448,10 @@ pub(crate) fn create(
                 intent_mode: 0,
                 intent_mode_t: 0.0,
                 intent_mode_bars: 0.0,
+                spark_frames: 0,
+                ring_frames: 0,
+                transition_kind: 0,
+                prev_core_cycle: usize::MAX,
             }
             .build(cx);
 

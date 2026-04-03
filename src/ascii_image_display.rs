@@ -72,7 +72,11 @@ impl UiRow {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DropdownKind { Machine, Theme }
 
-struct DragState { row: UiRow, start_x: f32, start_y: f32, start_value: f32 }
+struct DragState {
+    row: UiRow, start_x: f32, start_y: f32, start_value: f32,
+    /// When set: X-axis controls this param (dual-axis global drag mode)
+    col_row: Option<UiRow>, start_value2: f32,
+}
 
 pub struct AsciiImageDisplay {
     pub frame_buffer: Arc<Mutex<Option<FrameBuffer>>>,
@@ -91,9 +95,7 @@ pub struct AsciiImageDisplay {
     dropdown: RefCell<Option<DropdownKind>>,
     // V6: menu glitch transition (0.0 = hidden, 1.0 = fully visible)
     menu_reveal_t: RefCell<f32>,
-    // V6: typewriter effect — how many title chars are revealed
-    title_chars_revealed: RefCell<usize>,
-    // "more" toggle: collapsed by default, click to expand sound+visual sections
+// "more" toggle: collapsed by default, click to expand sound+visual sections
     more_expanded: RefCell<bool>,
 }
 
@@ -118,11 +120,11 @@ impl AsciiImageDisplay {
             frame_count: RefCell::new(0),
             dropdown: RefCell::new(None),
             menu_reveal_t: RefCell::new(0.0),
-            title_chars_revealed: RefCell::new(15),
             more_expanded: RefCell::new(false),
         }
         .build(cx, |_cx| {})
         .size(Stretch(1.0))
+        .navigable(true)
     }
 
     fn ensure_font(&self, canvas: &mut Canvas) -> Option<vg::FontId> {
@@ -161,35 +163,18 @@ impl AsciiImageDisplay {
         None
     }
 
-    /// Load Noto Sans Symbols 2 braille subset as a fallback for U+2800–U+28FF.
-    /// Returns the font ID if available (embedded first, then system fallbacks).
+    /// Load braille fallback font for U+2800–U+28FF.
+    /// Embedded: DejaVu Sans subset (14KB, vector outlines, public domain).
+    /// Cross-platform: works on macOS, Windows, Linux — no system font required.
     fn ensure_braille_font(&self, canvas: &mut Canvas) -> Option<vg::FontId> {
         let cached = *self.braille_font_id.borrow();
         if cached.is_some() { return cached; }
 
-        // Embedded Noto braille subset (37 KB, Apache 2.0)
-        static BRAILLE_FONT: &[u8] = include_bytes!("../assets/NotoSansSymbols2-Braille.ttf");
+        // Embedded DejaVu Sans braille subset — 14KB, pure vector, public domain
+        static BRAILLE_FONT: &[u8] = include_bytes!("../assets/DejaVuSans-Braille.ttf");
         if let Ok(id) = canvas.add_font_mem(BRAILLE_FONT) {
             *self.braille_font_id.borrow_mut() = Some(id);
             return Some(id);
-        }
-
-        // System fallbacks (macOS, Windows, Linux)
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_default();
-        for path in &[
-            "/System/Library/Fonts/Apple Braille.ttf".to_string(),
-            "C:\\Windows\\Fonts\\seguisym.ttf".to_string(),   // Segoe UI Symbol
-            "C:\\Windows\\Fonts\\segoeui.ttf".to_string(),
-            "/usr/share/fonts/truetype/unifont/unifont.ttf".to_string(),
-            "/usr/share/fonts/unifont/unifont.ttf".to_string(),
-            format!("{}/Library/Fonts/NotoSansSymbols2-Regular.ttf", home),
-        ] {
-            if let Ok(id) = canvas.add_font(path) {
-                *self.braille_font_id.borrow_mut() = Some(id);
-                return Some(id);
-            }
         }
         None
     }
@@ -274,60 +259,19 @@ impl AsciiImageDisplay {
         }
     }
 
-    /// Helper: render a single row of text with optional glitch transition
+    /// Helper: render a single row of text
     fn draw_row(&self, canvas: &mut Canvas, fid: vg::FontId, text: &str,
                  grid_row: usize, color: vg::Color, font_size: f32,
                  cell_w: f32, cell_h: f32, offset_x: f32, offset_y: f32, wave: f32) {
-        let reveal = *self.menu_reveal_t.borrow();
-        let frame = *self.frame_count.borrow();
-        let transitioning = reveal > 0.02 && reveal < 0.98;
-
-        if transitioning {
-            // Glitchy per-character reveal: each char has a staggered threshold
-            const GLITCH_CHARS: &[char] = &['.', ',', ';', ':', '|', '/', '\\', '-', '_'];
-            let mut paint = vg::Paint::color(color);
-            paint.set_font(&[fid]);
-            paint.set_font_size(font_size);
-            paint.set_text_align(vg::Align::Left);
-            paint.set_text_baseline(vg::Baseline::Top);
-            let base_x = offset_x + UI_COL as f32 * cell_w;
-            let y = offset_y + grid_row as f32 * cell_h + wave;
-
-            for (ci, ch) in text.chars().enumerate() {
-                // Per-char threshold: stagger by position + row
-                let char_hash = (ci as u32).wrapping_mul(48271)
-                    .wrapping_add(grid_row as u32 * 1664525)
-                    .wrapping_add(frame as u32 * 7919);
-                let char_threshold = ((char_hash >> 8) & 0xFF) as f32 / 255.0;
-
-                let x = base_x + ci as f32 * cell_w;
-                if reveal > char_threshold {
-                    // Char is revealed — but during transition, some chars corrupt
-                    let corrupt_roll = ((char_hash >> 16) & 0xFF) as f32 / 255.0;
-                    if corrupt_roll < (1.0 - reveal) * 0.4 {
-                        // Show a glitch char instead
-                        let gi = ((char_hash >> 20) as usize) % GLITCH_CHARS.len();
-                        let glyph: String = GLITCH_CHARS[gi].to_string();
-                        let _ = canvas.fill_text(x, y, &glyph, &paint);
-                    } else {
-                        let s: String = ch.to_string();
-                        let _ = canvas.fill_text(x, y, &s, &paint);
-                    }
-                }
-                // else: char not yet revealed — invisible
-            }
-        } else if reveal > 0.5 {
-            // Fully visible — normal render
-            let mut paint = vg::Paint::color(color);
-            paint.set_font(&[fid]);
-            paint.set_font_size(font_size);
-            paint.set_text_align(vg::Align::Left);
-            paint.set_text_baseline(vg::Baseline::Top);
-            let x = offset_x + UI_COL as f32 * cell_w;
-            let y = offset_y + grid_row as f32 * cell_h + wave;
-            let _ = canvas.fill_text(x, y, text, &paint);
-        }
-        // else: fully hidden — render nothing
+        if *self.menu_reveal_t.borrow() < 0.5 { return; }
+        let mut paint = vg::Paint::color(color);
+        paint.set_font(&[fid]);
+        paint.set_font_size(font_size);
+        paint.set_text_align(vg::Align::Left);
+        paint.set_text_baseline(vg::Baseline::Top);
+        let x = offset_x + UI_COL as f32 * cell_w;
+        let y = offset_y + grid_row as f32 * cell_h + wave;
+        let _ = canvas.fill_text(x, y, text, &paint);
     }
 
     /// Render UI overlay
@@ -413,32 +357,19 @@ impl AsciiImageDisplay {
             // Glitch probability: scales with energy, occasional at rest
             let glitch_prob = 0.015 + energy * 0.06;
 
-            let revealed = *self.title_chars_revealed.borrow();
-            let mut x = offset_x + UI_COL as f32 * cell_w;
-            let base_y = offset_y + 1.0 * cell_h;
-            for (ci, ch) in title.chars().enumerate() {
-                // V6: typewriter — only show revealed chars
-                if ci >= revealed {
-                    // Show cursor blink on the next unrevealed char
-                    if ci == revealed && (frame / 8) % 2 == 0 {
-                        let _ = canvas.fill_text(x, base_y, "_", &paint);
-                    }
-                    break;
-                }
-                let char_phase = ci as f32 * 0.4 + t * 0.008;
-                let char_dy = drift_base + char_phase.sin() * energy * 0.6;
-                // Glitch the "sssssssss" prefix (first 9 chars)
-                let display_ch = if ci < 9 {
+            let base_y = offset_y + 1.0 * cell_h + drift_base;
+            // Build the full title string with glitch substitutions, then draw in one call.
+            let glitched: String = title.chars().enumerate().map(|(ci, ch)| {
+                if ci < 9 {
                     let per_char_hash = glitch_seed.wrapping_add(ci as u32 * 48271);
                     let roll = ((per_char_hash >> 8) & 0xFF) as f32 / 255.0;
                     if roll < glitch_prob {
                         GLITCH_CHARS[((per_char_hash >> 16) as usize) % GLITCH_CHARS.len()]
                     } else { ch }
-                } else { ch };
-                let char_str: String = display_ch.to_string();
-                let _ = canvas.fill_text(x, base_y + char_dy, &char_str, &paint);
-                x += cell_w;
-            }
+                } else { ch }
+            }).collect();
+            let title_x = offset_x + UI_COL as f32 * cell_w;
+            let _ = canvas.fill_text(title_x, base_y, &glitched, &paint);
         }
 
         // ═══════════════════════════════════════════════════════════════════
@@ -447,9 +378,6 @@ impl AsciiImageDisplay {
 
         let reveal_t = *self.menu_reveal_t.borrow();
         if reveal_t < 0.01 && dropdown.is_none() { return; }
-
-        // V6: glitch reveal — per-row stagger + random char corruption during transition
-        let menu_glitch_active = reveal_t > 0.02 && reveal_t < 0.98;
 
         // Menu item color: emphasis (not primary — reserve primary for title only)
         // Apply reveal_t as alpha multiplier for smooth fade
@@ -630,17 +558,16 @@ impl View for AsciiImageDisplay {
             *fc
         };
         let font = self.ensure_font(canvas);
-        let braille_font = self.ensure_braille_font(canvas);
 
         // Title always fully revealed (no typewriter — avoids startup stutter)
 
-        // V6: Smooth menu reveal transition (glitch in/out)
+        // Menu reveal: snap immediately (no interpolated transition — avoids per-char render cost)
         {
             let vis = *self.menu_visible.borrow();
             let mut t = self.menu_reveal_t.borrow_mut();
             let target = if vis { 1.0f32 } else { 0.0 };
-            *t += (target - *t) * 0.15; // ~6 frame transition
-            if (*t - target).abs() < 0.01 { *t = target; }
+            *t += (target - *t) * 0.18;
+            if (*t - target).abs() < 0.005 { *t = target; }
         }
 
         if let Ok(fb_lock) = self.frame_buffer.lock() {
@@ -693,18 +620,43 @@ impl View for AsciiImageDisplay {
                         if let Some(fid) = font {
                             if char_idx > 0 {
                                 let ch = CHARSET[char_idx];
-                                let mut buf = [0u8; 4];
-                                let s = ch.encode_utf8(&mut buf);
-                                let mut paint = vg::Paint::color(vg::Color::rgb(r, g, b));
-                                // Pass braille font as fallback so U+2800-U+28FF render correctly
-                                match braille_font {
-                                    Some(bfid) => paint.set_font(&[fid, bfid]),
-                                    None => paint.set_font(&[fid]),
+                                let ch_u32 = ch as u32;
+                                if ch_u32 >= 0x2800 && ch_u32 <= 0x28FF {
+                                    // Braille: draw as path circles — never pass to swash.
+                                    // Swash may fallback to system fonts with CBDT bitmap tables
+                                    // (Noto etc.) which causes abort(). Path circles are safe.
+                                    let bits = (ch_u32 - 0x2800) as u8;
+                                    if bits != 0 {
+                                        // 8-dot grid: (x_frac, y_frac) for dots 1-8
+                                        const DOTS: [(f32, f32); 8] = [
+                                            (0.25, 0.14), // dot 1 upper-left
+                                            (0.25, 0.38), // dot 2 mid-left
+                                            (0.25, 0.62), // dot 3 lower-left
+                                            (0.75, 0.14), // dot 4 upper-right
+                                            (0.75, 0.38), // dot 5 mid-right
+                                            (0.75, 0.62), // dot 6 lower-right
+                                            (0.25, 0.86), // dot 7 ext lower-left
+                                            (0.75, 0.86), // dot 8 ext lower-right
+                                        ];
+                                        let dot_r = (cell_w * 0.09).max(1.0);
+                                        let mut path = vg::Path::new();
+                                        for (i, &(fx, fy)) in DOTS.iter().enumerate() {
+                                            if bits & (1 << i) != 0 {
+                                                path.circle(x + cell_w * fx, y + cell_h * fy, dot_r);
+                                            }
+                                        }
+                                        canvas.fill_path(&mut path, &vg::Paint::color(vg::Color::rgb(r, g, b)));
+                                    }
+                                } else {
+                                    let mut buf = [0u8; 4];
+                                    let s = ch.encode_utf8(&mut buf);
+                                    let mut paint = vg::Paint::color(vg::Color::rgb(r, g, b));
+                                    paint.set_font(&[fid]);
+                                    paint.set_font_size(font_size);
+                                    paint.set_text_align(vg::Align::Center);
+                                    paint.set_text_baseline(vg::Baseline::Top);
+                                    let _ = canvas.fill_text(x + cell_w * 0.5, y, s, &paint);
                                 }
-                                paint.set_font_size(font_size);
-                                paint.set_text_align(vg::Align::Center);
-                                paint.set_text_baseline(vg::Baseline::Top);
-                                let _ = canvas.fill_text(x + cell_w * 0.5, y, s, &paint);
                             }
                         } else {
                             let mut path = vg::Path::new();
@@ -731,6 +683,9 @@ impl View for AsciiImageDisplay {
         event.map(|window_event: &WindowEvent, _meta| {
             let menu_vis = *self.menu_visible.borrow();
             match window_event {
+                WindowEvent::MouseEnter => {
+                    cx.focus_with_visibility(false);
+                }
                 WindowEvent::MouseMove(_mx, _my) => {
                     let mx = cx.mouse().cursorx;
                     let my = cx.mouse().cursory;
@@ -740,21 +695,31 @@ impl View for AsciiImageDisplay {
 
                     let drag = self.drag.borrow();
                     if let Some(ds) = drag.as_ref() {
-                        let delta = (mx - ds.start_x) + (ds.start_y - my);
-                        let row = ds.row;
-                        let sv = ds.start_value;
-                        drop(drag);
                         let fine = cx.modifiers().contains(Modifiers::SHIFT);
-                        self.apply_drag_delta(row, sv, delta, fine);
+                        if let Some(col_row) = ds.col_row {
+                            // Dual-axis: Y → bandwidth, X → filter
+                            let dy = ds.start_y - my;
+                            let dx = mx - ds.start_x;
+                            let (row, sv, sv2) = (ds.row, ds.start_value, ds.start_value2);
+                            drop(drag);
+                            self.apply_drag_delta(row, sv, dy, fine);
+                            self.apply_drag_delta(col_row, sv2, dx, fine);
+                        } else {
+                            let delta = (mx - ds.start_x) + (ds.start_y - my);
+                            let row = ds.row;
+                            let sv = ds.start_value;
+                            drop(drag);
+                            self.apply_drag_delta(row, sv, delta, fine);
+                        }
                     }
                 }
                 WindowEvent::MouseDown(MouseButton::Left) => {
                     let mx = cx.mouse().cursorx;
                     let my = cx.mouse().cursory;
+
+                    // ── Dropdown click handling (always first priority) ──
                     if let Some((col, row)) = self.pixel_to_cell(mx, my) {
                         let dropdown = *self.dropdown.borrow();
-
-                        // ── Dropdown click handling ──
                         if let Some(dd) = dropdown {
                             match dd {
                                 DropdownKind::Machine => {
@@ -785,7 +750,25 @@ impl View for AsciiImageDisplay {
                             }
                             return; // consume click
                         }
+                    }
 
+                    // ── When menu hidden: whole-canvas dual-axis drag ──
+                    // Up/down → bandwidth, left/right → filter freq
+                    if !menu_vis {
+                        *self.drag.borrow_mut() = Some(DragState {
+                            row: UiRow::SampleRate,
+                            col_row: Some(UiRow::Filter),
+                            start_x: mx, start_y: my,
+                            start_value: self.get_param_value(UiRow::SampleRate),
+                            start_value2: self.get_param_value(UiRow::Filter),
+                        });
+                        cx.capture();
+                        cx.lock_cursor_icon();
+                        return;
+                    }
+
+                    // ── Normal click handling (menu visible) ──
+                    if let Some((col, row)) = self.pixel_to_cell(mx, my) {
                         // ── Normal click handling ──
                         if col < UI_COL || col >= UI_COL + UI_WIDTH { return; }
 
@@ -795,6 +778,7 @@ impl View for AsciiImageDisplay {
                                 *self.drag.borrow_mut() = Some(DragState {
                                     row: ui_row, start_x: mx, start_y: my,
                                     start_value: self.get_param_value(ui_row),
+                                    col_row: None, start_value2: 0.0,
                                 });
                                 cx.capture();
                                 cx.lock_cursor_icon();
@@ -826,6 +810,53 @@ impl View for AsciiImageDisplay {
                         cx.release();
                         cx.unlock_cursor_icon();
                     }
+                }
+                WindowEvent::MouseScroll(_, y) => {
+                    if *y != 0.0 {
+                        let more_open = *self.more_expanded.borrow();
+                        if let Some(grid_row) = *self.hover_row.borrow() {
+                            if let Some(ui_row) = UiRow::from_grid_row(grid_row, 0, menu_vis, more_open) {
+                                if ui_row.is_draggable() {
+                                    let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                                    let start_val = self.get_param_value(ui_row);
+                                    // positive y = scroll up = increase; negate for natural feel
+                                    self.apply_drag_delta(ui_row, start_val, *y * 10.0, fine);
+                                }
+                            }
+                        }
+                    }
+                }
+                WindowEvent::KeyDown(Code::ArrowUp, _) => {
+                    let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                    let start_val = self.get_param_value(UiRow::SampleRate);
+                    self.apply_drag_delta(UiRow::SampleRate, start_val, 8.0, fine);
+                }
+                WindowEvent::KeyDown(Code::ArrowDown, _) => {
+                    let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                    let start_val = self.get_param_value(UiRow::SampleRate);
+                    self.apply_drag_delta(UiRow::SampleRate, start_val, -8.0, fine);
+                }
+                WindowEvent::KeyDown(Code::ArrowRight, _) => {
+                    let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                    let start_val = self.get_param_value(UiRow::Filter);
+                    self.apply_drag_delta(UiRow::Filter, start_val, 8.0, fine);
+                }
+                WindowEvent::KeyDown(Code::ArrowLeft, _) => {
+                    let fine = cx.modifiers().contains(Modifiers::SHIFT);
+                    let start_val = self.get_param_value(UiRow::Filter);
+                    self.apply_drag_delta(UiRow::Filter, start_val, -8.0, fine);
+                }
+                WindowEvent::MouseDoubleClick(MouseButton::Left) => {
+                    let setter = ParamSetter::new(&*self.gui_ctx);
+                    setter.begin_set_parameter(&self.params.anti_alias);
+                    setter.set_parameter(&self.params.anti_alias, !self.params.anti_alias.value());
+                    setter.end_set_parameter(&self.params.anti_alias);
+                }
+                WindowEvent::KeyDown(Code::KeyA, _) => {
+                    let setter = ParamSetter::new(&*self.gui_ctx);
+                    setter.begin_set_parameter(&self.params.anti_alias);
+                    setter.set_parameter(&self.params.anti_alias, !self.params.anti_alias.value());
+                    setter.end_set_parameter(&self.params.anti_alias);
                 }
                 _ => {}
             }

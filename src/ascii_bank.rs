@@ -13,7 +13,9 @@
 /// Ordered charset: index 0 = lightest, index N-1 = densest.
 /// Structure:
 ///   [0..83]   = original ASCII chars (artwork-safe, exact match preserved)
-///   [84..N]   = block elements + box drawing for fine density (all in FiraCode)
+///   [84..86]  = additional ASCII ('"', 'm', '8')
+///   [87..93]  = UI digits ('2'..'9' excl '0')
+///   [94..N]   = block elements + box drawing for fine density (all in FiraCode)
 pub const CHARSET: &[char] = &[
     // ── Original ASCII (indices 0–83) — artwork chars preserved exactly ──
     ' ', '.', '\'', '`', ',', ':', ';', '-', '~', '_',
@@ -30,49 +32,49 @@ pub const CHARSET: &[char] = &[
     '2', '3', '4', '5', '6', '7', '9',
     // ── Block elements by visual density ──
     // Light partial blocks (quadrants — sparse coverage)
-    '▏', // 84  — 1/8 left block (~12% fill)
-    '▎', // 85  — 1/4 left block (~25% fill)
-    '▖', // 86  — lower-left quadrant (~25%)
-    '▗', // 87  — lower-right quadrant (~25%)
-    '▘', // 88  — upper-left quadrant (~25%)
-    '▝', // 89  — upper-right quadrant (~25%)
-    '▍', // 90  — 3/8 left block (~37%)
-    '▚', // 91  — diagonal quadrants (~50%)
-    '▞', // 92  — anti-diagonal quadrants (~50%)
-    '▌', // 93  — left half (~50%)
-    '▐', // 94  — right half (~50%)
-    '▄', // 95  — lower half (~50%)
-    '▀', // 96  — upper half (~50%)
-    '░', // 97  — light shade (~25% stipple)
-    '▒', // 98  — medium shade (~50% stipple)
-    '▓', // 99  — dark shade (~75% stipple)
-    '▙', // 100 — 3-quadrant (~75%)
-    '▛', // 101 — 3-quadrant (~75%)
-    '▜', // 102 — 3-quadrant (~75%)
-    '▟', // 103 — 3-quadrant (~75%)
-    '▇', // 104 — 7/8 block (~87%)
-    '█', // 105 — full block (100%)
-    // ── Box drawing — light to heavy (indices 106+) ──
-    '─', // 106 — light horizontal
-    '│', // 107 — light vertical
-    '┌', // 108 — light corner
-    '┐', // 109
-    '└', // 110
-    '┘', // 111
-    '├', // 112
-    '┤', // 113
-    '┬', // 114
-    '┴', // 115
-    '┼', // 116 — light cross
-    '═', // 117 — double horizontal
-    '║', // 118 — double vertical
-    '╔', // 119
-    '╗', // 120
-    '╚', // 121
-    '╝', // 122
-    '╬', // 123 — double cross (densest box drawing)
+    '▏', // 94  — 1/8 left block (~12% fill)
+    '▎', // 95  — 1/4 left block (~25% fill)
+    '▖', // 96  — lower-left quadrant (~25%)
+    '▗', // 97  — lower-right quadrant (~25%)
+    '▘', // 98  — upper-left quadrant (~25%)
+    '▝', // 99  — upper-right quadrant (~25%)
+    '▍', // 100 — 3/8 left block (~37%)
+    '▚', // 101 — diagonal quadrants (~50%)
+    '▞', // 102 — anti-diagonal quadrants (~50%)
+    '▌', // 103 — left half (~50%)
+    '▐', // 104 — right half (~50%)
+    '▄', // 105 — lower half (~50%)
+    '▀', // 106 — upper half (~50%)
+    '░', // 107 — light shade (~25% stipple)
+    '▒', // 108 — medium shade (~50% stipple)
+    '▓', // 109 — dark shade (~75% stipple)
+    '▙', // 110 — 3-quadrant (~75%)
+    '▛', // 111 — 3-quadrant (~75%)
+    '▜', // 112 — 3-quadrant (~75%)
+    '▟', // 113 — 3-quadrant (~75%)
+    '▇', // 114 — 7/8 block (~87%)
+    '█', // 115 — full block (100%)
+    // ── Box drawing — light to heavy (indices 116+) ──
+    '─', // 116 — light horizontal
+    '│', // 117 — light vertical
+    '┌', // 118 — light corner
+    '┐', // 119
+    '└', // 120
+    '┘', // 121
+    '├', // 122
+    '┤', // 123
+    '┬', // 124
+    '┴', // 125
+    '┼', // 126 — light cross
+    '═', // 127 — double horizontal
+    '║', // 128 — double vertical
+    '╔', // 129
+    '╗', // 130
+    '╚', // 131
+    '╝', // 132
+    '╬', // 133 — double cross (densest box drawing)
     // ── Braille patterns U+2800–U+28FF (all 256), in Unicode order ──
-    // Index 124 = U+2800 (⠀ blank braille), index 379 = U+28FF (⣿ full braille)
+    // Index 134 = U+2800 (⠀ blank braille), index 389 = U+28FF (⣿ full braille)
     '⠀','⠁','⠂','⠃','⠄','⠅','⠆','⠇','⠈','⠉','⠊','⠋','⠌','⠍','⠎','⠏',
     '⠐','⠑','⠒','⠓','⠔','⠕','⠖','⠗','⠘','⠙','⠚','⠛','⠜','⠝','⠞','⠟',
     '⠠','⠡','⠢','⠣','⠤','⠥','⠦','⠧','⠨','⠩','⠪','⠫','⠬','⠭','⠮','⠯',
@@ -91,11 +93,11 @@ pub const CHARSET: &[char] = &[
     '⣰','⣱','⣲','⣳','⣴','⣵','⣶','⣷','⣸','⣹','⣺','⣻','⣼','⣽','⣾','⣿',
 ];
 
-pub const CHARSET_LEN: usize = CHARSET.len(); // 380 (124 ASCII/block/box + 256 braille)
+pub const CHARSET_LEN: usize = CHARSET.len(); // 390 (134 ASCII/block/box + 256 braille)
 /// Number of non-braille entries (ASCII + block elements + box drawing).
 /// Use this for effect ranges (bloom, corruption, brightness) — braille chars
 /// live above this index and should not be randomly selected by effects.
-pub const ASCII_CHARSET_LEN: usize = 124;
+pub const ASCII_CHARSET_LEN: usize = 134;
 
 /// Map any char to its nearest index in CHARSET.
 /// Called at parse time only.
