@@ -1871,21 +1871,27 @@ impl Model for EditorData {
 
                             let dust_over_overlay = has_overlay && dust_present < 0.02;
 
-                            // PHASE 7: shimmer only on quantized frames
-                            // Braille chars (≥ BRAILLE_CHARSET_START) always pass through — ignore should_update gate.
+                            // PHASE 7: shimmer on quantized frames — braille gets single-bit-flip shimmer
                             let base_idx = if is_base {
                                 let raw_idx = base_raw as usize;
                                 if raw_idx >= BRAILLE_CHARSET_START {
-                                    raw_idx // braille preserved regardless of should_update
+                                    if should_update {
+                                        let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                                        let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
+                                        if life_roll < 0.002 {
+                                            // Flip one random dot bit — braille equivalent of ASCII ±1 shimmer
+                                            let bit = 1usize << (life_seed as usize & 7);
+                                            let code = (raw_idx - BRAILLE_CHARSET_START) ^ bit;
+                                            BRAILLE_CHARSET_START + (code & 0xFF)
+                                        } else { raw_idx }
+                                    } else { raw_idx } // held frame: keep braille art visible (image-like)
                                 } else if should_update {
                                     let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
                                     let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
                                     if life_roll < 0.002 {
                                         let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
                                         (raw_idx as i32 + dir).clamp(1, 83) as usize
-                                    } else {
-                                        raw_idx
-                                    }
+                                    } else { raw_idx }
                                 } else { 0 }
                             } else { 0 };
 
@@ -2319,11 +2325,6 @@ impl Model for EditorData {
                             frame_buffer.pixels[idx + 1] = to_u8(g);
                             frame_buffer.pixels[idx + 2] = to_u8(b);
                             frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
-                            // Braille chars from art images must survive effect overrides.
-                            // Bloom/corruption may have replaced the index — restore it.
-                            if density_idx >= BRAILLE_CHARSET_START {
-                                final_density_idx = density_idx;
-                            }
                             frame_buffer.char_indices[idx / 4] = final_density_idx as u16;
                         }
                     }
