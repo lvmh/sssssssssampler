@@ -628,11 +628,10 @@ impl View for AsciiImageDisplay {
                 } else { (180, 180, 180, 14, 14, 20) }
             } else { (180, 180, 180, 14, 14, 20) };
 
-            // Background fill only behind the dots row (thin strip matching title area)
-            let strip_h = cell_h * 1.6;
-            let mut bg_path = vg::Path::new();
-            bg_path.rect(bounds.x, title_y - cell_h * 0.3, bounds.w, strip_h);
-            canvas.fill_path(&mut bg_path, &vg::Paint::color(vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8)));
+            // Full-window background fill so the host doesn't show through
+            let mut full_bg = vg::Path::new();
+            full_bg.rect(bounds.x, bounds.y, bounds.w, bounds.h);
+            canvas.fill_path(&mut full_bg, &vg::Paint::color(vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8)));
 
             // Three dots, horizontally spaced like the title text chars
             let spacing = cell_w * 1.2;
