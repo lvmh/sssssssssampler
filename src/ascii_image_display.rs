@@ -80,6 +80,7 @@ pub struct AsciiImageDisplay {
     pub gui_ctx: Arc<dyn GuiContext>,
     pub ui_expanded: Arc<Mutex<bool>>,
     font_id: RefCell<Option<vg::FontId>>,
+    braille_font_id: RefCell<Option<vg::FontId>>,
     drag: RefCell<Option<DragState>>,
     grid_offset: RefCell<(f32, f32)>,
     grid_cell: RefCell<(f32, f32)>,
@@ -107,6 +108,7 @@ impl AsciiImageDisplay {
         Self {
             frame_buffer, params, gui_ctx, ui_expanded,
             font_id: RefCell::new(None),
+            braille_font_id: RefCell::new(None),
             drag: RefCell::new(None),
             grid_offset: RefCell::new((0.0, 0.0)),
             grid_cell: RefCell::new((8.0, 12.0)),
@@ -153,6 +155,39 @@ impl AsciiImageDisplay {
         ] {
             if let Ok(id) = canvas.add_font(path) {
                 *self.font_id.borrow_mut() = Some(id);
+                return Some(id);
+            }
+        }
+        None
+    }
+
+    /// Load Noto Sans Symbols 2 braille subset as a fallback for U+2800–U+28FF.
+    /// Returns the font ID if available (embedded first, then system fallbacks).
+    fn ensure_braille_font(&self, canvas: &mut Canvas) -> Option<vg::FontId> {
+        let cached = *self.braille_font_id.borrow();
+        if cached.is_some() { return cached; }
+
+        // Embedded Noto braille subset (37 KB, Apache 2.0)
+        static BRAILLE_FONT: &[u8] = include_bytes!("../assets/NotoSansSymbols2-Braille.ttf");
+        if let Ok(id) = canvas.add_font_mem(BRAILLE_FONT) {
+            *self.braille_font_id.borrow_mut() = Some(id);
+            return Some(id);
+        }
+
+        // System fallbacks (macOS, Windows, Linux)
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        for path in &[
+            "/System/Library/Fonts/Apple Braille.ttf".to_string(),
+            "C:\\Windows\\Fonts\\seguisym.ttf".to_string(),   // Segoe UI Symbol
+            "C:\\Windows\\Fonts\\segoeui.ttf".to_string(),
+            "/usr/share/fonts/truetype/unifont/unifont.ttf".to_string(),
+            "/usr/share/fonts/unifont/unifont.ttf".to_string(),
+            format!("{}/Library/Fonts/NotoSansSymbols2-Regular.ttf", home),
+        ] {
+            if let Ok(id) = canvas.add_font(path) {
+                *self.braille_font_id.borrow_mut() = Some(id);
                 return Some(id);
             }
         }
@@ -595,6 +630,7 @@ impl View for AsciiImageDisplay {
             *fc
         };
         let font = self.ensure_font(canvas);
+        let braille_font = self.ensure_braille_font(canvas);
 
         // Title always fully revealed (no typewriter — avoids startup stutter)
 
@@ -660,7 +696,11 @@ impl View for AsciiImageDisplay {
                                 let mut buf = [0u8; 4];
                                 let s = ch.encode_utf8(&mut buf);
                                 let mut paint = vg::Paint::color(vg::Color::rgb(r, g, b));
-                                paint.set_font(&[fid]);
+                                // Pass braille font as fallback so U+2800-U+28FF render correctly
+                                match braille_font {
+                                    Some(bfid) => paint.set_font(&[fid, bfid]),
+                                    None => paint.set_font(&[fid]),
+                                }
                                 paint.set_font_size(font_size);
                                 paint.set_text_align(vg::Align::Center);
                                 paint.set_text_baseline(vg::Baseline::Top);
