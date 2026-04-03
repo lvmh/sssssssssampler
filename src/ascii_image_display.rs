@@ -566,6 +566,20 @@ impl View for AsciiImageDisplay {
         let bounds = cx.bounds();
         if bounds.w <= 0.0 || bounds.h <= 0.0 { return; }
 
+        // ── Base layer: always fill the full window before anything else ──────
+        // Prevents host white showing through during loader or before first frame.
+        {
+            let (bg_r, bg_g, bg_b) = if let Ok(lock) = self.frame_buffer.lock() {
+                if let Some(fb) = lock.as_ref() {
+                    let [r, g, b] = fb.bg_rgb;
+                    (r, g, b)
+                } else { (14, 14, 20) }
+            } else { (14, 14, 20) };
+            let mut path = vg::Path::new();
+            path.rect(bounds.x, bounds.y, bounds.w, bounds.h);
+            canvas.fill_path(&mut path, &vg::Paint::color(vg::Color::rgb(bg_r, bg_g, bg_b)));
+        }
+
         // Update menu visibility
         {
             let mx = cx.mouse().cursorx - bounds.x;
@@ -628,13 +642,7 @@ impl View for AsciiImageDisplay {
                 } else { (180, 180, 180, 14, 14, 20) }
             } else { (180, 180, 180, 14, 14, 20) };
 
-            // Full-window background: clear_rect writes directly to the framebuffer,
-            // bypassing compositing — guarantees no host white showing through.
-            canvas.clear_rect(
-                bounds.x as u32, bounds.y as u32,
-                bounds.w as u32, bounds.h as u32,
-                vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8),
-            );
+            // Base layer already covered bg — nothing needed here for full-window fill.
 
             // Three dots, horizontally spaced like the title text chars
             let spacing = cell_w * 1.2;
