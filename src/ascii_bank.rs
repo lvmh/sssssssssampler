@@ -97,6 +97,8 @@ pub const CHARSET_LEN: usize = CHARSET.len(); // 380 (124 ASCII/block/box + 256 
 /// Called at parse time only.
 /// IMPORTANT: Exact ASCII matches always win — artwork characters are preserved.
 pub fn char_to_idx(c: char) -> u16 {
+    // Blank braille (U+2800, zero dots) is visually empty — treat as space
+    if c == '⠀' { return 0; }
     // Fast path: exact match (preserves all original artwork characters)
     for (i, &ch) in CHARSET.iter().enumerate() {
         if ch == c {
