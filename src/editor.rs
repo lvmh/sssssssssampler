@@ -1982,8 +1982,15 @@ impl Model for EditorData {
                                 if in_bloom {
                                     let bloom_seed = col.wrapping_mul(31337).wrapping_add(row.wrapping_mul(7919))
                                         .wrapping_add(self.moment.seed);
-                                    let gi = 94 + ((bloom_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
-                                    final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                    if final_density_idx >= BRAILLE_CHARSET_START {
+                                        // Braille bloom: XOR dot bits to scramble the pattern reactively
+                                        let code = final_density_idx - BRAILLE_CHARSET_START;
+                                        let scrambled = (code ^ ((bloom_seed >> 4) as usize)) & 0xFF;
+                                        final_density_idx = BRAILLE_CHARSET_START + scrambled;
+                                    } else {
+                                        let gi = 94 + ((bloom_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
+                                        final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                    }
                                     // Random theme color per cell (primary + 4 secondaries)
                                     let color_pick = ((bloom_seed >> 8) % 5) as usize;
                                     let gc = if color_pick == 0 { palette.primary } else { palette.secondary[color_pick - 1] };
@@ -2003,7 +2010,15 @@ impl Model for EditorData {
                                     .wrapping_add(self.moment.seed);
                                 let cn_val = ((collapse_noise >> 16) & 0xFF) as f32 / 255.0;
                                 if cn_val < collapse_t * 0.6 {
-                                    final_density_idx = 0;
+                                    if final_density_idx >= BRAILLE_CHARSET_START {
+                                        // Braille collapse: AND with noise mask to thin dots gradually
+                                        let code = final_density_idx - BRAILLE_CHARSET_START;
+                                        let mask = ((collapse_noise >> 8) & 0xFF) as usize;
+                                        let thinned = code & mask;
+                                        final_density_idx = if thinned > 0 { BRAILLE_CHARSET_START + thinned } else { 0 };
+                                    } else {
+                                        final_density_idx = 0;
+                                    }
                                 }
                             }
 
@@ -2014,26 +2029,38 @@ impl Model for EditorData {
                                 let gf = glitch_field(col, row, self.glitch_field_phase);
 
                                 if gf < glitch_prob * 8.0 {
-                                    // Style-aware glyph ranges per preset
-                                    let (pt_base, pt_range, cl_base, cl_range) = match self.visual_profile.glitch_style {
-                                        1 => (94, 12, 94, 12),                  // h-line: block elements only
-                                        2 => (94, ASCII_CHARSET_LEN - 94, 94, ASCII_CHARSET_LEN - 94), // warped: block/box only
-                                        3 => (1, 10, 94, 6),                    // minimal: light chars + thin blocks
-                                        _ => (1, ASCII_CHARSET_LEN - 1, 94, ASCII_CHARSET_LEN - 94), // mixed: full ASCII range
-                                    };
-                                    match corruption_tier {
-                                        1 => {
-                                            let gi = pt_base + ((glitch_seed >> 4) as usize % pt_range);
-                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
-                                        }
-                                        2 => {
-                                            let gi = cl_base + ((glitch_seed >> 4) as usize % cl_range);
-                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
-                                        }
-                                        _ => {
-                                            // Structural: always heavy blocks
-                                            let gi = 94 + ((glitch_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
-                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                    if final_density_idx >= BRAILLE_CHARSET_START {
+                                        // Braille corruption: XOR dot bits with corruption seed
+                                        // Higher tier = more bits flipped (more aggressive corruption)
+                                        let code = final_density_idx - BRAILLE_CHARSET_START;
+                                        let flip_mask = match corruption_tier {
+                                            1 => (glitch_seed >> 4) & 0x0F, // tier 1: flip up to 4 bits
+                                            2 => (glitch_seed >> 4) & 0x3F, // tier 2: flip up to 6 bits
+                                            _ => (glitch_seed >> 4) & 0xFF, // structural: flip any bits
+                                        };
+                                        final_density_idx = BRAILLE_CHARSET_START + ((code ^ flip_mask as usize) & 0xFF);
+                                    } else {
+                                        // Style-aware glyph ranges per preset
+                                        let (pt_base, pt_range, cl_base, cl_range) = match self.visual_profile.glitch_style {
+                                            1 => (94, 12, 94, 12),                  // h-line: block elements only
+                                            2 => (94, ASCII_CHARSET_LEN - 94, 94, ASCII_CHARSET_LEN - 94), // warped: block/box only
+                                            3 => (1, 10, 94, 6),                    // minimal: light chars + thin blocks
+                                            _ => (1, ASCII_CHARSET_LEN - 1, 94, ASCII_CHARSET_LEN - 94), // mixed: full ASCII range
+                                        };
+                                        match corruption_tier {
+                                            1 => {
+                                                let gi = pt_base + ((glitch_seed >> 4) as usize % pt_range);
+                                                final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                            }
+                                            2 => {
+                                                let gi = cl_base + ((glitch_seed >> 4) as usize % cl_range);
+                                                final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                            }
+                                            _ => {
+                                                // Structural: always heavy blocks
+                                                let gi = 94 + ((glitch_seed >> 4) as usize % (ASCII_CHARSET_LEN - 94));
+                                                final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
+                                            }
                                         }
                                     }
                                     let gc = palette.emphasis;
@@ -2244,10 +2271,21 @@ impl Model for EditorData {
                             if jitter_val > 0.1 {
                                 let flicker_roll = ((jitter_hash >> 8) & 0xFF) as f32 / 255.0;
                                 if flicker_roll < jitter_val * 0.12 * energy {
-                                    final_density_idx = 0;
-                                    r = palette.background.r;
-                                    g = palette.background.g;
-                                    b = palette.background.b;
+                                    if final_density_idx >= BRAILLE_CHARSET_START {
+                                        // Braille jitter: coin-flip between halving dot count or zeroing
+                                        let code = final_density_idx - BRAILLE_CHARSET_START;
+                                        final_density_idx = if (jitter_hash >> 16) & 1 == 0 {
+                                            let halved = code >> 1; // fewer dots
+                                            if halved > 0 { BRAILLE_CHARSET_START + halved } else { 0 }
+                                        } else { 0 };
+                                    } else {
+                                        final_density_idx = 0;
+                                    }
+                                    if final_density_idx == 0 {
+                                        r = palette.background.r;
+                                        g = palette.background.g;
+                                        b = palette.background.b;
+                                    }
                                 }
                             }
 
