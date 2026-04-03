@@ -97,18 +97,18 @@ impl ColorPalette {
     }
 
     // Helper to build a palette with auto is_light
-    fn build(bg: u32, primary: u32, accent: u32, fg: u32, muted: u32, border: u32, chart: [Color; 4]) -> Self {
+    fn build(bg: u32, primary: u32, emphasis: u32, sec0: u32, sec1: u32, sec2: u32, sec3: u32, chart: [Color; 4]) -> Self {
         let background = Color::from_srgb_hex(bg);
         ColorPalette {
             primary: Color::from_srgb_hex(primary),
             secondary: [
-                Color::from_srgb_hex(accent),
-                Color::from_srgb_hex(fg),
-                Color::from_srgb_hex(muted),
-                Color::from_srgb_hex(border),
+                Color::from_srgb_hex(sec0),
+                Color::from_srgb_hex(sec1),
+                Color::from_srgb_hex(sec2),
+                Color::from_srgb_hex(sec3),
             ],
             background,
-            emphasis: Color::from_srgb_hex(accent), // flash = accent color (themed)
+            emphasis: Color::from_srgb_hex(emphasis),
             is_light: Self::bg_is_light(&background),
             chart,
         }
@@ -120,21 +120,21 @@ impl ColorPalette {
 
     fn pink_dark() -> Self {
         let chart = [
-            oklch_to_color(0.75, 0.18, 340.0),  // chart-1: hot pink
-            oklch_to_color(0.70, 0.15,  25.0),  // chart-2: warm rose-orange
-            oklch_to_color(0.65, 0.12, 300.0),  // chart-3: violet
-            oklch_to_color(0.80, 0.20, 350.0),  // chart-4: deep rose
+            oklch_to_color(0.79, 0.185, 333.8),
+            oklch_to_color(0.70, 0.150,  25.0),
+            oklch_to_color(0.65, 0.120, 300.0),
+            oklch_to_color(0.80, 0.200, 350.0),
         ];
-        Self::build(0x2D1028, 0xFF88EB, 0xFF64A9, 0xF3EBF0, 0x968991, 0x4D2842, chart)
+        Self::build(0x2D1028, 0xFF88EB, 0xFF64A9, 0xFF64A9, 0xF3EBF0, 0x968991, 0x4D2842, chart)
     }
     fn pink_light() -> Self {
         let chart = [
-            oklch_to_color(0.38, 0.22, 340.0),  // layer 0: deep magenta — strong anchor
-            oklch_to_color(0.52, 0.26, 310.0),  // layer 1: rich violet-pink — transient pop
-            oklch_to_color(0.45, 0.20, 358.0),  // layer 2: dark rose — drift layer
-            oklch_to_color(0.58, 0.15, 325.0),  // layer 3: soft mauve — ghost echo
+            oklch_to_color(0.99, 0.006, 334.0),
+            oklch_to_color(0.52, 0.260, 310.0),
+            oklch_to_color(0.51, 0.214, 348.7),
+            oklch_to_color(0.78, 0.130,  25.0),
         ];
-        Self::build(0xFAEEF6, 0xB5007A, 0x8B0057, 0x2C2329, 0x796C74, 0xD098B8, chart)
+        Self::build(0xE56BC1, 0xB5007A, 0xFEFAFD, 0x8B0057, 0x2C2329, 0x796C74, 0xD098B8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -143,22 +143,21 @@ impl ColorPalette {
 
     fn kerama_dark() -> Self {
         let chart = [
-            oklch_to_color(0.65, 0.26, 250.0),  // cobalt blue
-            oklch_to_color(0.68, 0.24, 195.0),  // teal
-            oklch_to_color(0.73, 0.20, 225.0),  // sky blue
-            oklch_to_color(0.60, 0.26, 270.0),  // violet-blue
+            oklch_to_color(0.65, 0.260, 250.0),
+            oklch_to_color(0.68, 0.240, 195.0),
+            oklch_to_color(0.73, 0.200, 225.0),
+            oklch_to_color(0.60, 0.260, 270.0),
         ];
-        Self::build(0x0E1830, 0x31A4FA, 0x0067AB, 0xD9E5F0, 0x71889B, 0x283858, chart)
+        Self::build(0x0E1830, 0x31A4FA, 0x0067AB, 0x0067AB, 0xD9E5F0, 0x71889B, 0x283858, chart)
     }
     fn kerama_light() -> Self {
         let chart = [
-            oklch_to_color(0.32, 0.24, 250.0),  // layer 0: deep cobalt — strong anchor
-            oklch_to_color(0.48, 0.22, 195.0),  // layer 1: dark teal — transient pop
-            oklch_to_color(0.40, 0.20, 270.0),  // layer 2: indigo — drift layer
-            oklch_to_color(0.55, 0.18, 215.0),  // layer 3: slate blue — ghost echo
+            oklch_to_color(0.32, 0.240, 250.0),
+            oklch_to_color(0.66, 0.113, 195.5),
+            oklch_to_color(0.40, 0.200, 270.0),
+            oklch_to_color(0.55, 0.180, 215.0),
         ];
-        // Warmer bg so cobalt has something to fight against rather than pure white
-        Self::build(0xE0EEF8, 0x004DA8, 0x007BA0, 0x10202C, 0x526578, 0x90B0D8, chart)
+        Self::build(0x638FD8, 0x004DA8, 0x007BA0, 0x007BA0, 0x10202C, 0x526578, 0x90B0D8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -167,47 +166,21 @@ impl ColorPalette {
 
     fn brazil_dark() -> Self {
         let chart = [
-            oklch_to_color(0.65, 0.28, 145.0),  // vivid green
-            oklch_to_color(0.88, 0.20,  92.0),  // bright yellow
-            oklch_to_color(0.60, 0.26, 158.0),  // jungle green
-            oklch_to_color(0.76, 0.24, 112.0),  // lime
+            oklch_to_color(0.56, 0.147, 151.8),
+            oklch_to_color(0.88, 0.200,  92.0),
+            oklch_to_color(0.35, 0.141, 265.1),
+            oklch_to_color(0.65, 0.201, 145.0),
         ];
-        let background = Color::from_srgb_hex(0x0C1030);
-        ColorPalette {
-            primary:    Color::from_srgb_hex(0x10922C),
-            secondary: [
-                Color::from_srgb_hex(0xFFDA24),
-                Color::from_srgb_hex(0xDBE7DB),
-                Color::from_srgb_hex(0x839283),
-                Color::from_srgb_hex(0x283858),
-            ],
-            emphasis: Color::from_srgb_hex(0xFFDA24),
-            is_light: Self::bg_is_light(&background),
-            background,
-            chart,
-        }
+        Self::build(0x0C1030, 0x10922C, 0xFFDA24, 0xFFDA24, 0xDBE7DB, 0x839283, 0x283858, chart)
     }
     fn brazil_light() -> Self {
         let chart = [
-            oklch_to_color(0.35, 0.22, 145.0),  // layer 0: deep forest green — strong anchor
-            oklch_to_color(0.55, 0.28,  88.0),  // layer 1: rich mustard/olive — transient pop
-            oklch_to_color(0.42, 0.18, 162.0),  // layer 2: jungle green — drift layer
-            oklch_to_color(0.52, 0.20, 130.0),  // layer 3: lime-green — ghost echo
+            oklch_to_color(0.88, 0.170,  94.9),
+            oklch_to_color(0.35, 0.141, 265.1),
+            oklch_to_color(0.42, 0.180, 162.0),
+            oklch_to_color(0.52, 0.200, 130.0),
         ];
-        let background = Color::from_srgb_hex(0xDEF0DE);
-        ColorPalette {
-            primary:    Color::from_srgb_hex(0x005A00),
-            secondary: [
-                Color::from_srgb_hex(0xD4B000),
-                Color::from_srgb_hex(0x1A202C),
-                Color::from_srgb_hex(0x586379),
-                Color::from_srgb_hex(0x88C888),
-            ],
-            emphasis: Color::from_srgb_hex(0xD4B000),
-            is_light: Self::bg_is_light(&background),
-            background,
-            chart,
-        }
+        Self::build(0xDEF0DE, 0x005A00, 0xD4B000, 0xD4B000, 0x1A202C, 0x586379, 0x88C888, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -216,47 +189,21 @@ impl ColorPalette {
 
     fn noni_dark() -> Self {
         let chart = [
-            oklch_to_color(0.68, 0.28, 118.0),  // vivid olive-green
-            oklch_to_color(0.76, 0.26, 122.0),  // lime
-            oklch_to_color(0.62, 0.24, 135.0),  // moss green
-            oklch_to_color(0.82, 0.20, 100.0),  // yellow-green
+            oklch_to_color(0.68, 0.280, 118.0),
+            oklch_to_color(0.76, 0.260, 122.0),
+            oklch_to_color(0.62, 0.240, 135.0),
+            oklch_to_color(0.82, 0.200, 100.0),
         ];
-        let background = Color::from_srgb_hex(0x151805);
-        ColorPalette {
-            primary:    Color::from_srgb_hex(0x7D9100),
-            secondary: [
-                Color::from_srgb_hex(0x99B741),
-                Color::from_srgb_hex(0xDBDFCD),
-                Color::from_srgb_hex(0x828968),
-                Color::from_srgb_hex(0x3F4720),
-            ],
-            background,
-            emphasis:   Color::from_srgb_hex(0x99B741),
-            is_light: Self::bg_is_light(&background),
-            chart,
-        }
+        Self::build(0x151805, 0x7D9100, 0x99B741, 0x99B741, 0xDBDFCD, 0x828968, 0x3F4720, chart)
     }
     fn noni_light() -> Self {
         let chart = [
-            oklch_to_color(0.33, 0.20, 118.0),  // layer 0: deep olive-black — strong anchor
-            oklch_to_color(0.50, 0.26, 105.0),  // layer 1: vivid olive-yellow — transient pop
-            oklch_to_color(0.40, 0.18, 135.0),  // layer 2: dark moss — drift layer
-            oklch_to_color(0.55, 0.16, 118.0),  // layer 3: mid olive — ghost echo
+            oklch_to_color(0.60, 0.140, 127.8),
+            oklch_to_color(0.96, 0.012, 116.8),
+            oklch_to_color(0.50, 0.119, 119.3),
+            oklch_to_color(0.60, 0.140, 127.8),
         ];
-        let background = Color::from_srgb_hex(0xD0D8B8);
-        ColorPalette {
-            primary:    Color::from_srgb_hex(0x6C7E00),
-            secondary: [
-                Color::from_srgb_hex(0xBEE05F),
-                Color::from_srgb_hex(0x33391D),
-                Color::from_srgb_hex(0x53593B),
-                Color::from_srgb_hex(0x283010),
-            ],
-            emphasis: Color::from_srgb_hex(0xBEE05F),
-            is_light: Self::bg_is_light(&background),
-            background,
-            chart,
-        }
+        Self::build(0xC0E160, 0x6C7E00, 0xF1F3EA, 0xBEE05F, 0x33391D, 0x53593B, 0x283010, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -265,21 +212,21 @@ impl ColorPalette {
 
     fn paris_dark() -> Self {
         let chart = [
-            oklch_to_color(0.78, 0.28, 328.0),  // electric fuchsia
-            oklch_to_color(0.90, 0.22,  88.0),  // blazing yellow pop
-            oklch_to_color(0.60, 0.18, 300.0),  // violet
-            oklch_to_color(0.72, 0.22, 340.0),  // deep pink
+            oklch_to_color(0.78, 0.280, 328.0),
+            oklch_to_color(0.76, 0.158,  76.9),
+            oklch_to_color(0.60, 0.180, 300.0),
+            oklch_to_color(0.72, 0.220, 340.0),
         ];
-        Self::build(0x1A0818, 0xFF5FFF, 0xFFC273, 0xF2EBF1, 0x8F7E8D, 0x482840, chart)
+        Self::build(0x1A0818, 0xFF5FFF, 0xE7A000, 0xFFD200, 0xF2EBF1, 0x8F7E8D, 0x482840, chart)
     }
     fn paris_light() -> Self {
         let chart = [
-            oklch_to_color(0.36, 0.28, 328.0),  // layer 0: deep fuchsia-black — strong anchor
-            oklch_to_color(0.50, 0.22, 295.0),  // layer 1: dark violet — transient pop
-            oklch_to_color(0.42, 0.26, 350.0),  // layer 2: dark rose-red — drift layer
-            oklch_to_color(0.58, 0.18, 315.0),  // layer 3: mauve — ghost echo
+            oklch_to_color(0.36, 0.280, 328.0),
+            oklch_to_color(0.50, 0.220, 295.0),
+            oklch_to_color(0.42, 0.260, 350.0),
+            oklch_to_color(0.58, 0.180, 315.0),
         ];
-        Self::build(0xF8EEFF, 0xA800B0, 0x6B0097, 0x1A0D1C, 0x726270, 0xD098C0, chart)
+        Self::build(0xF8EEFF, 0xA800B0, 0x6B0097, 0x6B0097, 0x1A0D1C, 0x726270, 0xD098C0, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -288,34 +235,21 @@ impl ColorPalette {
 
     fn rooney_dark() -> Self {
         let chart = [
-            oklch_to_color(0.58, 0.30, 22.0),  // Man Utd red
-            oklch_to_color(0.82, 0.20, 78.0),  // badge gold
-            oklch_to_color(0.48, 0.28, 22.0),  // deep crimson
-            oklch_to_color(0.72, 0.22, 35.0),  // orange-red
+            oklch_to_color(0.66, 0.233,  18.5),
+            oklch_to_color(0.82, 0.200,  78.0),
+            oklch_to_color(0.48, 0.280,  22.0),
+            oklch_to_color(0.72, 0.220,  35.0),
         ];
-        let background = Color::from_srgb_hex(0x140001);
-        ColorPalette {
-            primary:    Color::from_srgb_hex(0xFFB000),
-            secondary: [
-                Color::from_srgb_hex(0xFFAD00),
-                Color::from_srgb_hex(0xFBF2F1),
-                Color::from_srgb_hex(0x996C69),
-                Color::from_srgb_hex(0x4C1013),
-            ],
-            emphasis: Color::from_srgb_hex(0xFFAD00),
-            is_light: Self::bg_is_light(&background),
-            background,
-            chart,
-        }
+        Self::build(0x140001, 0xCE0000, 0xFFAD00, 0xFFAD00, 0xFBF2F1, 0x996C69, 0x4C1013, chart)
     }
     fn rooney_light() -> Self {
         let chart = [
-            oklch_to_color(0.34, 0.28,  22.0),  // layer 0: blood red-black — strong anchor
-            oklch_to_color(0.50, 0.24,  45.0),  // layer 1: dark amber-gold — transient pop
-            oklch_to_color(0.40, 0.26,  10.0),  // layer 2: dark crimson — drift layer
-            oklch_to_color(0.55, 0.22,  32.0),  // layer 3: warm orange-red — ghost echo
+            oklch_to_color(0.78, 0.169,  70.5),
+            oklch_to_color(0.15, 0.041,  23.4),
+            oklch_to_color(0.97, 0.010,  25.1),
+            oklch_to_color(0.11, 0.030,  20.0),
         ];
-        Self::build(0xF5E8E4, 0xA00000, 0xC07000, 0x1E0C0C, 0x825D5C, 0xD08878, chart)
+        Self::build(0xE9000E, 0x190404, 0xC07000, 0xC07000, 0xFCF3F2, 0x825D5C, 0xD08878, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -329,7 +263,7 @@ impl ColorPalette {
             oklch_to_color(0.55, 0.06, 280.0),  // slate grey
             oklch_to_color(0.88, 0.03, 180.0),  // near-white
         ];
-        Self::build(0x1A1A20, 0xB0B6BF, 0x33363A, 0xE6EAF1, 0x7B7F85, 0x383840, chart)
+        Self::build(0x1A1A20, 0xB0B6BF, 0x33363A, 0x33363A, 0xE6EAF1, 0x7B7F85, 0x383840, chart)
     }
     fn kk_light() -> Self {
         let chart = [
@@ -338,7 +272,7 @@ impl ColorPalette {
             oklch_to_color(0.32, 0.008, 280.0),  // layer 2: dark slate — drift layer
             oklch_to_color(0.52, 0.008, 250.0),  // layer 3: medium gray — ghost echo
         ];
-        Self::build(0xECEEF2, 0x282D34, 0xC0C4CC, 0x16181C, 0x6D7176, 0xC0C0C8, chart)
+        Self::build(0xECEEF2, 0x282D34, 0xC0C4CC, 0xC0C4CC, 0x16181C, 0x6D7176, 0xC0C0C8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -352,17 +286,16 @@ impl ColorPalette {
             oklch_to_color(0.70, 0.14, 190.0),  // teal
             oklch_to_color(0.74, 0.15, 130.0),  // green
         ];
-        Self::build(0x1E1028, 0xC497F7, 0x84AAFF, 0xC2D3F5, 0x90A0C0, 0x382850, chart)
+        Self::build(0x1E1028, 0xC497F7, 0x84AAFF, 0x84AAFF, 0xC2D3F5, 0x90A0C0, 0x382850, chart)
     }
     fn catppuccin_light() -> Self {
         let chart = [
-            oklch_to_color(0.35, 0.26, 300.0),  // layer 0: deep mauve — strong anchor
-            oklch_to_color(0.45, 0.24, 258.0),  // layer 1: dark lavender-blue — transient pop
-            oklch_to_color(0.40, 0.20, 180.0),  // layer 2: dark teal — drift layer
-            oklch_to_color(0.52, 0.18, 145.0),  // layer 3: forest green — ghost echo
+            oklch_to_color(0.35, 0.260, 300.0),
+            oklch_to_color(0.45, 0.240, 258.0),
+            oklch_to_color(0.40, 0.200, 180.0),
+            oklch_to_color(0.52, 0.180, 145.0),
         ];
-        // Latte bg — warmer tinted parchment from Catppuccin Latte palette
-        Self::build(0xE6E9F0, 0x7F00CC, 0x1E66F5, 0x3C3F5A, 0x6A738B, 0xA088C0, chart)
+        Self::build(0x8B3AE5, 0x2389FF, 0x1E66F5, 0x5600A9, 0x3C3F5A, 0x6A738B, 0xA088C0, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -376,7 +309,7 @@ impl ColorPalette {
             oklch_to_color(0.60, 0.20, 200.0),  // slate blue
             oklch_to_color(0.72, 0.22,  55.0),  // sakura gold
         ];
-        Self::build(0x101828, 0x6BB1CA, 0xDD9700, 0xE4D5B1, 0x6C6151, 0x282038, chart)
+        Self::build(0x101828, 0x6BB1CA, 0xDD9700, 0xDD9700, 0xE4D5B1, 0x6C6151, 0x282038, chart)
     }
     fn kanagawa_light() -> Self {
         let chart = [
@@ -385,8 +318,7 @@ impl ColorPalette {
             oklch_to_color(0.40, 0.18, 148.0),  // layer 2: dark spring green — drift layer
             oklch_to_color(0.50, 0.20,   8.0),  // layer 3: dark sakura red — ghost echo
         ];
-        // Kanagawa lotus bg — warm parchment
-        Self::build(0xD5C4A1, 0x1A5E72, 0xAA6C00, 0x3A3A4A, 0x6B5E48, 0xA89868, chart)
+        Self::build(0xD5C4A1, 0x1A5E72, 0xAA6C00, 0xB7014D, 0x3A3A4A, 0x6B5E48, 0xA89868, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -400,7 +332,7 @@ impl ColorPalette {
             oklch_to_color(0.58, 0.22,  20.0),  // deep love
             oklch_to_color(0.65, 0.20, 332.0),  // moon foam
         ];
-        Self::build(0x10101C, 0xDF6B93, 0xC1A2E7, 0xDCDDFB, 0x635883, 0x302838, chart)
+        Self::build(0x10101C, 0xDF6B93, 0xC1A2E7, 0xC1A2E7, 0xDCDDFB, 0x635883, 0x302838, chart)
     }
     fn rosepine_light() -> Self {
         let chart = [
@@ -409,8 +341,7 @@ impl ColorPalette {
             oklch_to_color(0.40, 0.14, 195.0),  // layer 2: dark foam teal — drift layer
             oklch_to_color(0.52, 0.20,  80.0),  // layer 3: dark gold — ghost echo
         ];
-        // Rosé Pine Dawn bg — warm cream
-        Self::build(0xEEE4D4, 0x8B2252, 0x5C3F87, 0x3A3049, 0x89839D, 0xC8B898, chart)
+        Self::build(0xBD1359, 0xF8EAF3, 0x5C3F87, 0x5C3F87, 0x3A3049, 0x89839D, 0xC8B898, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -424,7 +355,7 @@ impl ColorPalette {
             oklch_to_color(0.72, 0.18, 170.0),  // cyan
             oklch_to_color(0.78, 0.15,  75.0),  // yellow
         ];
-        Self::build(0x1C1828, 0xB38EFF, 0xF860CD, 0xF8F6FE, 0x48619A, 0x382848, chart)
+        Self::build(0x1C1828, 0xB38EFF, 0xF860CD, 0xF860CD, 0xF8F6FE, 0x48619A, 0x382848, chart)
     }
     fn dracula_light() -> Self {
         let chart = [
@@ -433,7 +364,7 @@ impl ColorPalette {
             oklch_to_color(0.40, 0.22, 170.0),  // layer 2: dark cyan — drift layer
             oklch_to_color(0.52, 0.18, 290.0),  // layer 3: mid purple — ghost echo
         ];
-        Self::build(0xE8E4F5, 0x6020C0, 0xCC0088, 0x1A1B28, 0x48619A, 0xB098C8, chart)
+        Self::build(0xE8E4F5, 0x6020C0, 0xCC0088, 0xCC0088, 0x1A1B28, 0x48619A, 0xB098C8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -447,16 +378,16 @@ impl ColorPalette {
             oklch_to_color(0.70, 0.22,  68.0),  // yellow-orange
             oklch_to_color(0.58, 0.30,  42.0),  // deep orange
         ];
-        Self::build(0x0C0C0C, 0xFF6E00, 0xFF9736, 0xEFEDEA, 0x7F7F7F, 0x2C2C2C, chart)
+        Self::build(0x0C0C0C, 0xFF6E00, 0xFF9736, 0xFF9736, 0xEFEDEA, 0x7F7F7F, 0x2C2C2C, chart)
     }
     fn papaya_light() -> Self {
         let chart = [
-            oklch_to_color(0.38, 0.26,  42.0),  // layer 0: burnt orange-black — strong anchor
-            oklch_to_color(0.52, 0.28,  60.0),  // layer 1: dark amber — transient pop
-            oklch_to_color(0.30, 0.05,  50.0),  // layer 2: near-black warm — drift layer
-            oklch_to_color(0.55, 0.22,  55.0),  // layer 3: mid amber — ghost echo
+            oklch_to_color(0.15, 0.000,  89.9),
+            oklch_to_color(0.52, 0.280,  60.0),
+            oklch_to_color(0.97, 0.010,  48.6),
+            oklch_to_color(0.55, 0.220,  55.0),
         ];
-        Self::build(0xF0EAE0, 0xC04800, 0xA03000, 0x0C0C0C, 0x5D5D5D, 0xD0C8B8, chart)
+        Self::build(0xD84F00, 0xFBF3EF, 0xA03000, 0xA03000, 0x0C0C0C, 0x5D5D5D, 0xD0C8B8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -465,21 +396,21 @@ impl ColorPalette {
 
     fn dominican_dark() -> Self {
         let chart = [
-            oklch_to_color(0.60, 0.26, 264.0),  // royal blue
-            oklch_to_color(0.56, 0.24,  22.0),  // flag red
-            oklch_to_color(0.65, 0.24, 240.0),  // ocean blue
-            oklch_to_color(0.68, 0.22,  32.0),  // coral
+            oklch_to_color(0.60, 0.260, 264.0),
+            oklch_to_color(0.56, 0.240,  22.0),
+            oklch_to_color(0.65, 0.240, 240.0),
+            oklch_to_color(0.68, 0.220,  32.0),
         ];
-        Self::build(0x101840, 0x4E83DE, 0xDB898B, 0xD0D8F0, 0x6878A0, 0x283060, chart)
+        Self::build(0x101840, 0xDF002B, 0xE6293F, 0xDB898B, 0xD0D8F0, 0x6878A0, 0x283060, chart)
     }
     fn dominican_light() -> Self {
         let chart = [
-            oklch_to_color(0.30, 0.26, 264.0),  // layer 0: deep royal blue — strong anchor
-            oklch_to_color(0.40, 0.28,  22.0),  // layer 1: dark flag red — transient pop
-            oklch_to_color(0.36, 0.24, 242.0),  // layer 2: midnight blue — drift layer
-            oklch_to_color(0.50, 0.22,  38.0),  // layer 3: dark coral — ghost echo
+            oklch_to_color(0.97, 0.010, 267.4),
+            oklch_to_color(0.50, 0.200,  21.9),
+            oklch_to_color(0.73, 0.050, 264.2),
+            oklch_to_color(0.50, 0.220,  38.0),
         ];
-        Self::build(0xD8E8F8, 0x1840A0, 0xA02020, 0x080820, 0x486090, 0x98A8C8, chart)
+        Self::build(0x0736C2, 0xF2F5FC, 0xBA0329, 0xB00000, 0x080820, 0x486090, 0x98A8C8, chart)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -493,15 +424,15 @@ impl ColorPalette {
             oklch_to_color(0.65, 0.24, 240.0),  // deep indigo
             oklch_to_color(0.65, 0.22,  38.0),  // warm coral
         ];
-        Self::build(0x101838, 0x4E83DE, 0xDB898B, 0xF1F1F1, 0x67788D, 0x283058, chart)
+        Self::build(0x101838, 0x4E83DE, 0xDB898B, 0xDB898B, 0xF1F1F1, 0x67788D, 0x283058, chart)
     }
     fn calsonic_light() -> Self {
         let chart = [
-            oklch_to_color(0.30, 0.22, 258.0),  // layer 0: deep ocean blue — strong anchor
-            oklch_to_color(0.46, 0.24,  18.0),  // layer 1: dark coral-red — transient pop
-            oklch_to_color(0.36, 0.20, 240.0),  // layer 2: midnight indigo — drift layer
-            oklch_to_color(0.52, 0.18,  32.0),  // layer 3: dark salmon — ghost echo
+            oklch_to_color(0.30, 0.220, 258.0),
+            oklch_to_color(0.46, 0.240,  18.0),
+            oklch_to_color(0.97, 0.010, 261.8),
+            oklch_to_color(0.52, 0.180,  32.0),
         ];
-        Self::build(0xD0DFEE, 0x1A4A9A, 0xA04040, 0x001830, 0x54698A, 0x98A8C8, chart)
+        Self::build(0x0041B6, 0xF1F5FC, 0xA04040, 0xA04040, 0x001830, 0x54698A, 0x98A8C8, chart)
     }
 }

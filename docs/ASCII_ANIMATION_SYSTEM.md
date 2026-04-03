@@ -1,10 +1,35 @@
-# ASCII Animation System — V6
+# ASCII Animation System — V9
 
 Visual engine for sssssssssampler — a responsive visual instrument driven by audio and interaction.
 
 > **V6** adds braille sub-cell effects (spark burst, edge fringe, background grain) and two new dust modes (vertical rain, beat ring pulse). Together these bring the total effect count to 21 visual layers across 9 integrated modules.
 >
 > **V6.1** makes all effects braille-reactive: GlitchBloom, Corruption, Collapse, and Jitter now mutate braille dot patterns (XOR/AND/shift) instead of replacing braille with ASCII. Density alpha uses dot-count/8 for braille cells. The `should_update` quantization gate now applies to braille identically to ASCII — braille art flickers and stutters with bandwidth.
+>
+> **V7** — Deep braille integration: BPM wave, braille dissolve transitions, echo trails, energy-gated multi-dot patterns, global braille tint.
+>
+> **V8** — Perceptual hierarchy refactor. **Energy = intent, not density.** Ambient effects are restructured as exclusive states — only one ambient layer is active at a time based on energy state. Added visual breathing (8-bar slow sine). Moments suppress the ambient layer entirely. Global braille tint removed — each effect carries its own semantic color. Spark burst and ring pulse draw from a per-frame braille pattern palette (shifts every half-bar) shared with grain, so at most 4 dot-types appear simultaneously.
+>
+> **V8 state machine:**
+> ```
+> IDLE  (energy < 0.22 ) → grain + fringe (silence texture)
+> FLOW  (0.22 – 0.55)    → rain + fringe  (vertical motion)
+> BUILD (0.55 – 0.82)    → BPM wave       (horizontal beat sweep)
+> PEAK  (energy > 0.82)  → none ambient   (moments dominate)
+> During GlitchBloom / Collapse / PhaseWave → ALL ambient suppressed
+> ```
+>
+> **V9** — Musical timing engine. **Visuals peak ON the beat, not after it.** An anticipation scheduler detects transients and pre-schedules ring/spark effects to arrive exactly on the next beat. Moments are gated to downbeats only (base_prob compensated to preserve density). Phrase boundaries (4-bar/8-bar) trigger forced moments. Ambient effects now pulse with musical rhythm — grain fades with beat phase, fringe swells on beat 1, rain accelerates at bar start.
+>
+> **V9 anticipation model:**
+> ```
+> Transient detected → compute frames_to_next_beat
+>   Ring starts:   beat − 20 frames  (expands, peaks ON beat)
+>   Sparks start:  beat − 6 frames   (scatter, brightest at beat+2)
+> Moment roll:   gated to downbeats only (4/4 beat 1)
+> 4-bar phrase:  GlitchBloom forced (75% prob)
+> 8-bar phrase:  Collapse or GlitchBloom forced (biggest moment)
+> ```
 
 ---
 
@@ -36,6 +61,18 @@ Editor Model (editor.rs :: UpdateFrameBuffer)
   ├─ V5: Field warp, DropPhase, intent rendering modes
   ├─ V6: Braille effects (spark burst, edge fringe, background grain)
   ├─ V6: Dust effects (vertical rain, beat ring pulse)
+  ├─ V7: BPM braille wave (BUILD state only; beat sweep across empty cells)
+  ├─ V7: Braille transition dissolve (dot-count fringe on image crossfade boundary)
+  ├─ V7: Braille motion echo trails (ASCII ghost → braille fading dots)
+  ├─ V8: State-driven ambient activation (grain/rain/wave/fringe exclusive per energy state)
+  ├─ V8: Visual breathing (8-bar slow sine modulates ambient probability)
+  ├─ V8: Moment suppression (GlitchBloom/Collapse/PhaseWave clear ambient layer)
+  ├─ V8: Per-frame braille palette (coherent dot vocabulary across grain/sparks/ring)
+  ├─ V9: Musical clock (beat_phase, bar_phase, is_downbeat, is_phrase_start_4/8)
+  ├─ V9: Anticipation scheduler (ring −20 frames, sparks −6 frames, peak ON beat)
+  ├─ V9: Downbeat moment gating (moments fire on beat 1 only; density compensated)
+  ├─ V9: Phrase forced moments (4-bar=GlitchBloom 75%, 8-bar=Collapse or Bloom)
+  ├─ V9: Ambient rhythm lock (beat_gate on grain, fringe_swell on downbeat, rain_bar_mod)
   └─ Writes FrameBuffer (54×42, RGBA8 + char_indices + theme colors + metadata)
          │
          ▼
@@ -100,6 +137,12 @@ branches; effects check `idx >= BRAILLE_CHARSET_START` to detect braille cells.
 **Two-dot braille indices** (2 bits set — used by beat ring pulse):
 ```
 137 = ⠃   139 = ⠅   143 = ⠉   168 = ⠢   199 = ⡁   263 = ⢁
+```
+
+**Multi-dot braille indices** (3–6 dots — used by V7 energy-gated effects):
+```
+141 = ⠍ (3)  190 = ⠾ (4)  183 = ⠷ (4)  161 = ⠡ (3)
+149 = ⠕ (3)  165 = ⠥ (3)  197 = ⡅ (4)  272 = ⢐ (3)
 ```
 
 ---
@@ -171,9 +214,9 @@ Sinusoidal density bands sweep diagonally with heavy random weighting:
 , , , , . .
 ```
 
-### Style 3 — Vertical Rain (NEW in V6)
+### Style 3 — Vertical Rain (NEW in V6, updated V8)
 
-Each of the 54 columns has an independent "drop" that descends continuously. Drop speed scales with energy — louder = faster falling. Two-row trail with brightness taper:
+Active only in **FLOW state** (energy 0.22–0.55). Disappears in IDLE (too quiet) and BUILD (wave takes over). Suppressed during moments. Each of the 54 columns has an independent "drop" that descends continuously. Drop speed scales with energy — louder = faster falling. Two-row trail with brightness taper. Pattern pool includes vertical-pair patterns (⠃⠇) for an elongated drip character:
 
 ```
 col:   0    5   10   15   20   25   30   35   40   45   50
@@ -345,7 +388,7 @@ frame 0:      frame 8:       frame 16:      frame 24:
 
 ---
 
-## Module 5 — Braille Spark Burst (NEW in V6)
+## Module 5 — Braille Spark Burst (NEW in V6, updated V7)
 
 ```
 Trigger: transient + energy > 0.15
@@ -353,7 +396,7 @@ Lifetime: 8 frames (spark_frames countdown)
 Only fires on empty cells (final_density_idx == 0)
 ```
 
-Scattered single-dot braille chars appear across empty cells at the moment of a hit. Each spark is independently hashed — position, dot orientation, and color all vary per-cell. Alpha fades linearly with spark age × energy.
+Scattered braille chars appear across empty cells at the moment of a hit. Each spark is independently hashed — position, dot orientation, and color all vary per-cell. Alpha fades linearly with spark age × energy. In V7, dot density is energy-gated: at low energy → single-dot patterns; at high energy → 3–5 dot patterns (SPARK_MULTI pool), making hard transients visually heavier.
 
 **Frame 0 (impact):**
 ```
@@ -383,10 +426,11 @@ At bit-depth 8 on Dracula theme this looks like scattered purple/pink sparks on 
 
 ---
 
-## Module 6 — Braille Edge Fringe (NEW in V6)
+## Module 6 — Braille Edge Fringe (NEW in V6, updated V8)
 
 ```
-Always-on (no trigger)
+Active: IDLE and FLOW states only (visual_state ≤ 1)
+Suppressed during GlitchBloom / Collapse / PhaseWave
 Only fires on empty cells adjacent to ASCII art content
 Probability: (neighbor_count × 0.22) × (0.4 + energy × 0.6)
 Ticks every 8 frames (slow, subtle)
@@ -415,16 +459,17 @@ Empty cells directly bordering ASCII art content get 2–3 dot braille patterns,
 
 ---
 
-## Module 7 — Braille Background Grain (NEW in V6)
+## Module 7 — Braille Background Grain (NEW in V6, updated V8)
 
 ```
-Always-on (no trigger), lowest priority of all effects
-~1.2–2.2% of empty cells at rest, up to ~2.2% at peak energy
-Single-dot braille only (indices 125, 126, 128, 132, 140, 156, 188, 252)
+Active: IDLE state only (visual_state == 0, energy < 0.22)
+Suppressed during GlitchBloom / Collapse / PhaseWave
+~1.8–4.0% of empty cells; probability modulated by 8-bar breath_mod (0.70–1.00)
+Pattern: draws from per-frame braille palette (F0/F1 families at IDLE)
 Ticks every 4 frames (slow drift)
 ```
 
-Permanent film-grain texture in empty background areas. Each dot is stable for 4 frames, then independently re-rolls. Creates organic micro-texture without the visual weight of ASCII characters.
+IDLE-state texture — the visual equivalent of silence. Each grain dot is stable for 4 frames before re-rolling. In V8 the grain uses the shared per-frame braille palette so it visually "matches" any sparks that fire simultaneously. Grain disappears completely when energy rises to FLOW/BUILD, creating genuine contrast when activity begins. The breath_mod sine makes it pulse subtly even in total silence.
 
 **Example (background area, grain visible):**
 ```
@@ -473,31 +518,224 @@ frame 0:  ####      frame 1:   ####  (one T appears briefly among #s)
 
 ---
 
+## Module 10 — BPM Braille Wave (NEW in V7, updated V8)
+
+```
+Active: BUILD state only (visual_state == 2, energy 0.55–0.82)
+Suppressed during GlitchBloom / Collapse / PhaseWave
+Fires once per beat (ticks_per_bar / 4), left-to-right sweep
+Wave width: 5 cells; dot density escalates with energy
+```
+
+A wave of braille patterns sweeps left-to-right in sync with the beat. The leading edge blazes brightest; cells behind it fade. Dot density is energy-tiered:
+
+| Energy | Pattern tier | Dots |
+|--------|-------------|------|
+| 0.22–0.40 | 1-dot sparse | ⠁⠂⠄⠈ |
+| 0.40–0.60 | 2–3 dot medium | ⠃⠅⠍⠾ |
+| 0.60–0.80 | 4-dot full | ⠕⠡⠷⠥ |
+| 0.80+ | 5–8 dot dense | ⡅⢐⡷⢿ |
+
+Color: `palette.chart[0]` at alpha proportional to `wave_intensity × 0.55`.
+
+```
+beat 0 (wave at col 0):              beat ~1/4 (wave at col 13):
+⠁  ⠂  ⠄  ⠁  ⠂                          ⠁  ⠂  ⠄  ⠁  ⠂
+⠂     ⠁     ⠄                              ⠂     ⠁     ⠄
+⠄  ⠁     ⠂  ⠁                                ⠄  ⠁     ⠂
+```
+
+---
+
+## Module 11 — Braille Color Accent (NEW in V7)
+
+```
+Always-on, applied to every braille cell after all dot-content effects
+Mix: 38% blend toward palette.chart[0]
+```
+
+All braille cells (char_indices ≥ 134) receive a 38% tint toward the theme's most vibrant accent color (`palette.chart[0]`). This creates visible contrast between braille dot patterns (accent-tinted) and ASCII block art (primary-colored), making the two visual layers visually distinct.
+
+On Dracula theme: braille dots are warm purple-pink against cold gray ASCII art.
+On Rooney theme: braille dots shimmer orange-yellow against white structure.
+
+---
+
+## Module 12 — Braille Transition Dissolve (NEW in V7)
+
+```
+Active: during image transitions (in_transition = true)
+Alternates per cycle: even cycles = original binary dither, odd = braille dissolve
+```
+
+On odd image cycles, the transition threshold zone becomes a curtain of braille dots instead of a hard cut. Cells near the dither boundary (within ±0.10 of `threshold`) render as braille with dot count proportional to their position in the zone:
+
+```
+zone position →  0.0    0.1    0.2    ...   0.8    0.9   1.0
+dot count     →   ⣿      ⡿      ⠿    ...    ⠇      ⠃     ⠁
+               (8 dots)                             (2)  (1)
+```
+
+Dot patterns are spatially rotated by a per-cell hash for organic, non-uniform feel. On even cycles the original instant-cut binary dither is used — both behaviors coexist across cycles.
+
+---
+
+## Module 13 — Braille Motion Echo Trails (NEW in V7)
+
+```
+Active: motion_echo > 0.01 + energy > 0.1
+Writes to unwritten (background) cells only
+Echo ages 1–3, alpha = 0.25 − age × 0.08
+```
+
+Ghost trails from historical image positions. When the source cell is an ASCII character, the echo behavior now alternates by echo age:
+
+- **Odd echo ages** (1, 3): original behavior — sparse low-density ASCII char (`raw.min(20)`)
+- **Even echo ages** (2): braille trail — dot count fades with age (6 dots at age 1→4→2 for older)
+
+Braille source cells are always preserved exactly regardless of age.
+
+```
+echo age 1:  ⠿  (6 dots — freshest, brightest)
+echo age 2:  ⠏  (4 dots — fading)
+echo age 3:  ⠃  (2 dots — nearly gone)
+```
+
+---
+
+## V9: Musical Clock
+
+Derived each frame from `t` (anim_tick as f32) and `ticks_per_beat` / `ticks_per_bar`:
+
+```rust
+beat_phase        = (t % ticks_per_beat) / ticks_per_beat  // 0.0→1.0 within beat
+bar_phase         = (t % ticks_per_bar)  / ticks_per_bar   // 0.0→1.0 within bar
+beat_num          = (t / ticks_per_beat) as u64
+beat_in_bar       = beat_num % 4                            // 0=downbeat, 1-3=upbeats
+is_beat_start     = playing && beat_num changed this frame
+is_downbeat       = is_beat_start && beat_in_bar == 0
+is_phrase_start_4 = playing && (t / (ticks_per_bar × 4)) changed this frame
+is_phrase_start_8 = playing && (t / (ticks_per_bar × 8)) changed this frame
+```
+
+All time references are in anim_tick frames. `ticks_per_beat = 3600 / effective_BPM`.
+
+---
+
+## V9: Anticipation Engine
+
+Visuals fire *before* the beat so they peak *on* it — the opposite of reactive triggering.
+
+```
+Transient detected (energy > 0.15, ring not already queued):
+
+  frames_to_beat = ceil(ticks_per_beat - (t % ticks_per_beat))
+
+  scheduled_ring   = anim_tick + (frames_to_beat − 20).max(2)
+  scheduled_sparks = anim_tick + (frames_to_beat − 6).max(2)
+
+Each frame: if anim_tick >= scheduled_ring   → start ring_frames = 20, clear schedule
+            if anim_tick >= scheduled_sparks → start spark_frames = 8, clear schedule
+```
+
+The ring pulse expands over exactly 20 frames and reaches peak radius at `beat_start + 0` — it arrives, doesn't react. Sparks scatter 6 frames before the beat and are brightest at beat+2 (two frames into the hit), matching human perception of drum attack envelope.
+
+---
+
+## V9: Downbeat Moment Gating
+
+Moments now only trigger on beat 1 of each bar (downbeat). To preserve average density, `base_prob` is pre-multiplied by `ticks_per_beat` — the probability-per-frame stays the same, but all probability is concentrated into the downbeat frame.
+
+```rust
+// Before V9: every frame
+if trigger_roll < base_prob { trigger_moment() }
+
+// V9: downbeats only, same average density
+base_prob *= ticks_per_beat;
+if is_downbeat && trigger_roll < base_prob { trigger_moment() }
+```
+
+This means moments always land on "1" — the visual and musical emphasis coincide.
+
+---
+
+## V9: Phrase Forced Moments
+
+At phrase boundaries, moments are forced regardless of current energy or cooldown:
+
+| Boundary | Forced moment | Probability |
+|----------|--------------|-------------|
+| 4-bar start | GlitchBloom | 75% |
+| 8-bar start | Collapse (if recent Bloom) or GlitchBloom | 100% |
+| 8-bar start | 2-frame downbeat micro-freeze | always |
+
+The 8-bar boundary fires the biggest available moment — it's the phrase apex. The 2-frame micro-freeze gives each 8-bar downbeat a sharp visual punctuation even when energy is too low for a full moment.
+
+---
+
+## V9: Ambient Rhythm Lock
+
+Ambient effects now breathe with the beat and bar rather than purely following energy:
+
+| Signal | Formula | Applied to |
+|--------|---------|-----------|
+| `beat_gate` | `1.0 − beat_phase × 0.28` (1.0 on downbeat, fades 28% by beat end) | Grain probability |
+| `fringe_swell` | `1.45` on downbeat, `1.0 + 0.15 × (1 − beat_phase)` otherwise | Fringe probability |
+| `rain_bar_mod` | `1.0 + 0.35 × (1 − bar_phase)` (peaks at bar start, decays across bar) | Rain drop speed |
+
+Grain: pulses with each beat — the silence texture has rhythmic breath.  
+Fringe: blooms most at bar 1, beat 1 — art edges flare on the downbeat.  
+Rain: falls fastest at bar start, decelerates across the bar — each new bar is a fresh drop.
+
+---
+
+## V8 State Machine — Ambient Effect Activation
+
+At any time, only one ambient layer is active based on `visual_state`. Strong moments additionally suppress all ambient effects:
+
+| State | Energy range | Ambient active | Suppressed by moments |
+|-------|-------------|---------------|----------------------|
+| IDLE  | < 0.22 | grain + fringe | GlitchBloom, Collapse, PhaseWave |
+| FLOW  | 0.22–0.55 | rain + fringe | GlitchBloom, Collapse, PhaseWave |
+| BUILD | 0.55–0.82 | BPM wave | GlitchBloom, Collapse, PhaseWave |
+| PEAK  | > 0.82 | none | — |
+
+**Visual breathing:** `breath_mod = f(slow 8-bar sine)` scales ambient probability from 0.70–1.00. At silent stretches the system breathes deepest; under load it stays near full.
+
+**Per-frame braille palette:** 6 dot families (F0=1-dot sparse → F5=8-dot dense), advancing every half-bar. Grain, sparks (tier-0), and ring (tier-0) all pick from the active family — at most 4 dot-types per frame.
+
+---
+
 ## Full Compositing Order (Back → Front, per cell each frame)
 
 ```
 1.  Background fill      — palette.background (exact sRGB, no cell logic)
 2.  Overlay images (x4)  — filter + structural alpha, scatter-dissolve transitions
-3.  Core image           — velocity scroll, min 30% visible, wave-biased dissolve
+3.  Core image           — velocity scroll, min 30% visible, wave-biased/braille dissolve (V7)
 4.  Shimmer              — rare ±1 index flicker on art cells only
 5.  Dust glyph           — dust_present < dust_density → ASCII chars 1–6 (.,`',;)
-6.  Spark burst          — braille single dots, 8-frame transient decay (V6)
-7.  Edge fringe          — braille 2–3 dot halos at art borders (V6)
-8.  Background grain     — braille single-dot film grain, always-on (V6)
-9.  Vertical rain        — braille falling-column dots (V6)
-10. Beat ring pulse      — braille 2-dot expanding ring on transient (V6)
-11. Collapse             — cell zeroing (moment, overrides all below)
-12. Coherent glitch      — FBM-noise corruption (bit depth < 12)
-13. GlitchBloom          — expanding block/box chars (moment)
-14. Brightness boost     — moment + phrase brightness modulation
-15. Afterglow tint       — emphasis color drift during Afterglow moment
-16. Transient flash      — 10% emphasis tint on transient hit
-17. Light mode inversion — brightness becomes darkening on light themes
-18. Restraint            — idle/recovery dampening (35%/50%) applied last
-19. UI overlay           — femtovg text: title + param menu (never in framebuffer)
+6.  Spark burst          — braille dots, 8-frame transient decay; tier-0 uses frame palette (V8)
+7.  Beat ring pulse      — braille dots, expanding ring; tier-0 uses frame palette (V8)
+8.  BPM braille wave     — BUILD state only; beat-synced sweep, dot density scales with energy (V8)
+9.  Edge fringe          — IDLE/FLOW only; braille halos at art borders (V8)
+10. Background grain     — IDLE only; breathes with 8-bar sine; uses frame palette (V8)
+11. Vertical rain        — FLOW only; braille falling-column dots (V8)
+12. Collapse             — cell zeroing (moment, overrides all below)
+13. Coherent glitch      — FBM-noise corruption (bit depth < 12)
+14. GlitchBloom          — expanding block/box chars (moment)
+15. Jitter               — temporal cell dropout / braille dot halving
+16. Brightness boost     — moment + phrase brightness modulation
+17. Afterglow tint       — emphasis color drift during Afterglow moment
+18. Transient flash      — 10% emphasis tint on transient hit
+19. Light mode inversion — brightness becomes darkening on light themes
+20. Restraint            — idle/recovery dampening (35%/50%) applied last
+21. Motion echo pass     — ghost trails; ASCII sources smear into braille (even ages) (V7)
+22. UI overlay           — femtovg text: title + param menu (never in framebuffer)
 ```
 
-*Each layer 1–10 gates on `final_density_idx == 0` — effects earlier in the list take precedence.*
+*Layers 1–11 gate on `final_density_idx == 0` — effects earlier in the list take precedence.*
+*Layers 8–11 are each exclusively active in one energy state (V8 state machine).*
+*Layer 21 (motion echo) only writes cells with alpha == 0 (unwritten background cells).*
 
 ---
 
@@ -716,7 +954,7 @@ coherent_noise ≤ filter_val → alpha 1.0  [full]
 
 ---
 
-## Per-Frame State (EditorData) — V6
+## Per-Frame State (EditorData) — V9
 
 ```rust
 // Animation
@@ -750,6 +988,11 @@ intent_mode: u8, intent_mode_t: f32, intent_mode_bars: f32
 // V6: Braille effects
 spark_frames: u32    // 8-frame countdown, set on transient — drives spark burst
 ring_frames: u32     // 20-frame countdown, set on transient — drives beat ring pulse
+
+// V9: Anticipation scheduler
+scheduled_sparks: Option<u64>         // anim_tick to start spark burst (pre-beat)
+scheduled_ring: Option<u64>           // anim_tick to start ring pulse (pre-beat)
+pending_moment: Option<(u64, Moment)> // phrase-forced moment, fires at scheduled tick
 ```
 
 ---

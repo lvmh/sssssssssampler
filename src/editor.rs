@@ -540,6 +540,13 @@ pub struct EditorData {
     pub spark_frames: u32,
     #[lens(ignore)]
     pub ring_frames: u32,
+    // ── V9: Musical anticipation engine ──
+    #[lens(ignore)]
+    pub scheduled_sparks: Option<u64>,  // anim_tick when spark burst should start
+    #[lens(ignore)]
+    pub scheduled_ring: Option<u64>,    // anim_tick when ring pulse should start
+    #[lens(ignore)]
+    pub pending_moment: Option<(u64, Moment)>, // (start_tick, type) — fires when tick >= start_tick
     // ── Musical transitions ──
     #[lens(ignore)]
     pub transition_kind: u8,
@@ -791,18 +798,7 @@ impl Model for EditorData {
                     let dust_tick = self.frame_update_counter as u32;
                     self.quant_frame = self.quant_frame.wrapping_add(1);
 
-                    // Braille spark burst: set on transient, decay each frame
-                    if transient && energy > 0.15 {
-                        self.spark_frames = 8;
-                    } else if self.spark_frames > 0 {
-                        self.spark_frames -= 1;
-                    }
-                    // Beat ring pulse: triggered on transient, expands over 20 frames
-                    if transient && energy > 0.15 {
-                        self.ring_frames = 20;
-                    } else if self.ring_frames > 0 {
-                        self.ring_frames -= 1;
-                    }
+                    // V9: Spark/ring scheduling moved to musical clock block (after ticks_per_beat)
 
                     if playing {
                         self.anim_tick = self.anim_tick.wrapping_add(1);
@@ -842,6 +838,52 @@ impl Model for EditorData {
                     let ticks_per_bar = ticks_per_beat * 4.0;
 
                     let bars_this_frame = if playing { 1.0 / ticks_per_bar.max(1.0) } else { 0.0 };  // V5: hoisted for Intent Mode
+
+                    // ── V9: Musical clock — beat/bar/phrase boundary flags ──
+                    let beat_phase    = (t % ticks_per_beat) / ticks_per_beat;       // 0-1 within beat
+                    let bar_phase     = (t % ticks_per_bar)  / ticks_per_bar;        // 0-1 within bar
+                    let beat_num      = (t / ticks_per_beat) as u64;
+                    let beat_in_bar   = (beat_num % 4) as u8;                         // 0-3
+                    let is_beat_start = playing && beat_num != ((t - 1.0).max(0.0) / ticks_per_beat) as u64;
+                    let is_downbeat   = is_beat_start && beat_in_bar == 0;            // beat 1 of bar
+                    let is_phrase_start_4 = playing
+                        && (t / (ticks_per_bar * 4.0)) as u64
+                        != ((t - 1.0).max(0.0) / (ticks_per_bar * 4.0)) as u64;
+                    let is_phrase_start_8 = playing
+                        && (t / (ticks_per_bar * 8.0)) as u64
+                        != ((t - 1.0).max(0.0) / (ticks_per_bar * 8.0)) as u64;
+
+                    // ── V9: Anticipation engine — schedule sparks/ring to peak ON next beat ──
+                    // Ring (20 frames) starts beat_start-20 so it peaks exactly on the beat.
+                    // Sparks (8 frames) peak +2 frames after beat (tension release sequence).
+                    if transient && energy > 0.15
+                        && self.scheduled_ring.is_none() && self.ring_frames == 0 {
+                        let beat_pos = t % ticks_per_beat;
+                        let frames_to_beat = ((ticks_per_beat - beat_pos) as u64).max(2);
+                        self.scheduled_ring   = Some(self.anim_tick + frames_to_beat.saturating_sub(20));
+                        self.scheduled_sparks = Some(self.anim_tick + frames_to_beat.saturating_sub(6)); // +2 after beat
+                    }
+                    // Fire scheduled effects
+                    if self.scheduled_ring.map_or(false, |s| self.anim_tick >= s) {
+                        self.ring_frames = 20;
+                        self.scheduled_ring = None;
+                    }
+                    if self.scheduled_sparks.map_or(false, |s| self.anim_tick >= s) {
+                        self.spark_frames = 8;
+                        self.scheduled_sparks = None;
+                    }
+                    // Decay
+                    if self.ring_frames   > 0 { self.ring_frames   -= 1; }
+                    if self.spark_frames  > 0 { self.spark_frames  -= 1; }
+
+                    // V9: Drop sequence — phrase start after a drop fires ring instantly on 1
+                    if self.drop_detected && is_downbeat && energy > 0.3 && self.ring_frames == 0 {
+                        self.ring_frames = 20;
+                        self.scheduled_ring = None;
+                        if self.scheduled_sparks.is_none() {
+                            self.scheduled_sparks = Some(self.anim_tick + 2);
+                        }
+                    }
 
                     // ── V4: Phrase system ──
                     if playing {
@@ -1398,14 +1440,20 @@ impl Model for EditorData {
                                 self.moment_recovery_timer -= 1;
                                 0.5
                             } else { 1.0 };
-                            let base_prob = (0.013 + energy * 0.05) * phrase_moment_mod * recovery_mult * self.moment_prob_scale * self.visual_profile.moment_mult;
+                            // V9: Gate to downbeats — only roll on beat 1 of bar.
+                            // Compensate: multiply base_prob by ticks_per_beat so average event density
+                            // is preserved despite sampling ticks_per_bar times less frequently.
+                            let base_prob = ((0.013 + energy * 0.05)
+                                * phrase_moment_mod * recovery_mult
+                                * self.moment_prob_scale * self.visual_profile.moment_mult
+                                * ticks_per_beat).min(0.85);
                             // V6: Apply preset-specific moment bias
                             let moment_bias_idx = |m: &Moment| -> usize { match m {
                                 Moment::FreezeCut => 0, Moment::GlitchBloom => 1, Moment::LockIn => 2,
                                 Moment::PhaseWave => 3, Moment::Collapse => 4, Moment::Afterglow => 5,
                                 _ => 0,
                             }};
-                            if trigger_roll < base_prob {
+                            if is_downbeat && trigger_roll < base_prob {
                                 let intent_mag = self.intent_tension.max(self.intent_release).max(self.intent_chaos);
                                 let mut dominant = if self.intent_tension > self.intent_release && self.intent_tension > self.intent_chaos {
                                     if (trigger_hash >> 20) & 1 == 0 { Moment::FreezeCut } else { Moment::LockIn }
@@ -1448,6 +1496,49 @@ impl Model for EditorData {
                     self.prev_energy_state = visual_state;
                     self.prev_filter = filter_val;
                     self.prev_sr = target_sr;
+
+                    // ── V9: Phrase boundary forced moments ──
+                    // 4-bar start: GlitchBloom at BUILD/PEAK (big energy phrase arrival)
+                    if is_phrase_start_4 && visual_state >= 2
+                        && self.moment.active.is_none() && self.moment.cooldown < 15 {
+                        let ph4_hash = (self.anim_tick as u32).wrapping_mul(1664525);
+                        if ((ph4_hash >> 16) & 3) != 0 { // 75% chance
+                            self.moment.active = Some(Moment::GlitchBloom);
+                            self.moment.timer = 0;
+                            self.moment.duration = 14;
+                            self.moment.seed = ph4_hash;
+                            self.moment.bloom_center = (
+                                ((ph4_hash >> 4) as usize % COLS as usize),
+                                ((ph4_hash >> 14) as usize % ROWS as usize),
+                            );
+                        }
+                    }
+                    // 8-bar start: biggest moment — Collapse (release) or GlitchBloom (tension)
+                    if is_phrase_start_8 && visual_state >= 2
+                        && self.moment.active.is_none() && self.moment.cooldown < 30 {
+                        let ph8_hash = (self.anim_tick as u32).wrapping_mul(2246822507);
+                        let big = if self.intent_release > self.intent_tension { Moment::Collapse } else { Moment::GlitchBloom };
+                        self.moment.active = Some(big.clone());
+                        self.moment.timer = 0;
+                        self.moment.duration = match big { Moment::Collapse => 30, _ => 16 };
+                        self.moment.seed = ph8_hash;
+                        if matches!(big, Moment::GlitchBloom) {
+                            self.moment.bloom_center = (
+                                ((ph8_hash >> 4) as usize % COLS as usize),
+                                ((ph8_hash >> 14) as usize % ROWS as usize),
+                            );
+                        }
+                        self.recent_moment_count += 1;
+                    }
+                    // Micro-freeze on downbeat (ring lands on beat, micro-freeze gives the
+                    // ±2 frame "anticipation tension" before the spark release)
+                    if is_downbeat && visual_state >= 2
+                        && self.moment.active.is_none() && self.micro_freeze_frames == 0 {
+                        let mf_beat_hash = (self.anim_tick as u32).wrapping_mul(40503);
+                        if ((mf_beat_hash >> 16) & 0xFF) < (self.visual_profile.micro_freeze_thresh as u32 * 2).min(60) {
+                            self.micro_freeze_frames = 2; // tight 2-frame anticipation freeze
+                        }
+                    }
 
                     // ── V3: Micro-freezes (lighter FreezeCut) ──
                     if self.micro_freeze_frames > 0 {
@@ -1513,6 +1604,48 @@ impl Model for EditorData {
                     // Recovery after moments
                     let recovery_dampen = if self.moment.cooldown > 15 { 0.5 } else { 1.0 };
                     let _in_recovery = self.moment_recovery_timer > 0;
+
+                    // ── V8: Visual breathing — slow 8-bar sine modulates ambient intensity ──
+                    // Energy shifts the floor: silence breathes deepest (0.70), loud stays near 1.0.
+                    let breath_cycle = (t / (ticks_per_bar * 8.0)) * std::f32::consts::TAU;
+                    let breath_floor = 0.70 + energy * 0.15;
+                    let breath_mod = breath_floor + (1.0 - breath_floor) * (breath_cycle.sin() * 0.5 + 0.5);
+
+                    // ── V8: Moment suppression — dramatic moments need clean visual authority ──
+                    let moment_suppress = bloom_active || collapse_active || phase_wave_active;
+
+                    // ── V8: State-driven ambient activation — one system at a time ──
+                    // IDLE (0)  → grain (residue, barely visible)
+                    // FLOW (1)  → rain  (vertical motion, building)
+                    // BUILD (2) → BPM wave (horizontal beat sweep)
+                    // PEAK (3)  → nothing ambient (sparks/ring are transient-triggered)
+                    let ambient_grain_active  = visual_state == 0 && !moment_suppress;
+                    let ambient_rain_active   = visual_state == 1 && !moment_suppress;
+                    let bpm_wave_active_frame = visual_state == 2 && !moment_suppress;
+                    let fringe_active         = visual_state <= 1 && !moment_suppress;
+
+                    // ── V9: Ambient rhythm lock — subtle beat synchronization ──
+                    // Grain pulses with beat: strongest at beat start, fades across beat.
+                    let beat_gate    = if is_downbeat { 1.0f32 } else { 1.0 - beat_phase * 0.28 };
+                    // Fringe swells on beat 1 of bar, relaxed on other beats.
+                    let fringe_swell = if beat_in_bar == 0 { 1.45f32 } else { 1.0 + 0.15 * (1.0 - beat_phase) };
+                    // Rain drops slightly faster at bar start, relaxes mid-bar.
+                    let rain_bar_mod = 1.0 + 0.35 * (1.0 - bar_phase);
+
+                    // ── V8: Per-frame braille pattern palette ──
+                    // 6 families of 4 patterns each, advancing every half-bar.
+                    // Grain, sparks (tier-0), and ring (tier-0) all draw from this so
+                    // at most 4 dot-types appear simultaneously — coherent vocabulary.
+                    const BRAILLE_PATTERN_FAMILIES: [[usize; 4]; 6] = [
+                        [135, 136, 138, 142],   // F0: 1-dot corners  (sparse residue)
+                        [150, 166, 198, 262],   // F1: 1-dot edge singles
+                        [137, 139, 141, 145],   // F2: 2-dot pairs    (current/charge)
+                        [149, 161, 165, 183],   // F3: 3-dot clusters (structure)
+                        [190, 197, 221, 279],   // F4: 4-dot quads    (density)
+                        [335, 389, 272, 381],   // F5: 5-8 dot dense  (peak)
+                    ];
+                    let braille_family_idx = ((t / ticks_per_bar * 2.0) as u32 % 6) as usize;
+                    let braille_frame_palette = &BRAILLE_PATTERN_FAMILIES[braille_family_idx];
 
                     for row in 0..ROWS {
                         for col in 0..COLS {
@@ -1637,10 +1770,39 @@ impl Model for EditorData {
                                         (transition_progress + bias).clamp(0.0, 1.0)
                                     }
                                 };
-                                if dissolve_val < threshold {
-                                    self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32
+                                let new_cell = self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32;
+                                let old_cell = self.ascii_bank.get_cell(prev_core_img, bank_col_base, src_row) as f32;
+                                // Per-cycle: half transitions use original binary dither,
+                                // the other half use a braille dissolve fringe for extra texture.
+                                let use_braille_dissolve = (core_cycle & 1) == 1;
+                                if use_braille_dissolve {
+                                    // Braille dissolve zone — cells near the dither boundary become
+                                    // braille patterns with dot count proportional to position.
+                                    let braille_zone = 0.10_f32;
+                                    if dissolve_val < threshold - braille_zone {
+                                        new_cell
+                                    } else if dissolve_val > threshold + braille_zone {
+                                        old_cell
+                                    } else {
+                                        let zone_t = ((dissolve_val - (threshold - braille_zone)) / (braille_zone * 2.0)).clamp(0.0, 1.0);
+                                        let filled_bits: u8 = match (zone_t * 8.0) as u8 {
+                                            0 => 0b11111111,
+                                            1 => 0b01111111,
+                                            2 => 0b00111111,
+                                            3 => 0b00011111,
+                                            4 => 0b00001111,
+                                            5 => 0b00000111,
+                                            6 => 0b00000011,
+                                            _ => 0b00000001,
+                                        };
+                                        let rot = ((dissolve_hash >> 13) & 0x7) as u32;
+                                        let dot_bits = filled_bits.rotate_right(rot);
+                                        let dot_bits = if dot_bits == 0 { 1u8 } else { dot_bits };
+                                        (BRAILLE_CHARSET_START + dot_bits as usize) as f32
+                                    }
                                 } else {
-                                    self.ascii_bank.get_cell(prev_core_img, bank_col_base, src_row) as f32
+                                    // Original binary dither — instant cut at threshold
+                                    if dissolve_val < threshold { new_cell } else { old_cell }
                                 }
                             } else {
                                 self.ascii_bank.get_cell(core_img, bank_col_base, src_row) as f32
@@ -2097,8 +2259,12 @@ impl Model for EditorData {
                                 let spark_roll = ((spark_hash >> 16) & 0xFF) as f32 / 255.0;
                                 let spark_prob = energy * 0.065 * (1.0 - spark_age / 8.0);
                                 if spark_roll < spark_prob {
-                                    const SPARK_DOTS: [usize; 8] = [135, 136, 138, 142, 150, 166, 198, 262];
-                                    final_density_idx = SPARK_DOTS[(spark_hash >> 8) as usize % 8];
+                                    // Energy tier: tier-0 → frame palette (coherent with grain/ring);
+                                    // tier-1+ → SPARK_MULTI (energetic multi-dot on hard transients).
+                                    const SPARK_MULTI: [usize; 8] = [141, 190, 183, 272, 161, 149, 165, 197];
+                                    let tier = ((1.0 - spark_age / 8.0) * energy * 2.0) as usize;
+                                    let pat_idx = (spark_hash >> 8) as usize % 4;
+                                    final_density_idx = if tier >= 1 { SPARK_MULTI[pat_idx % 8] } else { braille_frame_palette[pat_idx] };
                                     let fade = 1.0 - spark_age / 8.0;
                                     let use_chart = ((spark_hash >> 20) & 1) == 0;
                                     let sc = if use_chart { palette.chart[0] } else { palette.emphasis };
@@ -2122,14 +2288,56 @@ impl Model for EditorData {
                                     let ring_roll = ((rh >> 16) & 0xFF) as f32 / 255.0;
                                     let ring_prob = 0.45 * (1.0 - ring_age / 20.0) * (1.0 - dist_from_ring / 1.8);
                                     if ring_roll < ring_prob {
-                                        const RING_PATS: [usize; 6] = [137, 139, 143, 168, 199, 263];
-                                        final_density_idx = RING_PATS[(rh >> 8) as usize % 6];
+                                        // tier-0 → frame palette (coherent with grain/sparks);
+                                        // tier-1+ → RING_DENSE (substantial arcs at high energy)
+                                    const RING_DENSE: [usize; 6] = [141, 190, 183, 161, 149, 165];
+                                    let ring_tier = ((1.0 - ring_age / 20.0) * energy * 2.5) as usize;
+                                    let ring_pat_idx = (rh >> 8) as usize % 4;
+                                    final_density_idx = if ring_tier >= 1 {
+                                        RING_DENSE[ring_pat_idx % 6]
+                                    } else {
+                                        braille_frame_palette[ring_pat_idx] // coherent with grain
+                                    };
                                         let fade = 1.0 - ring_age / 20.0;
                                         let alpha = fade * 0.55;
                                         let rc = palette.chart[0];
                                         r = r + (rc.r - r) * alpha;
                                         g = g + (rc.g - g) * alpha;
                                         b = b + (rc.b - b) * alpha;
+                                    }
+                                }
+                            }
+
+                            // ── V7: BPM braille wave — musical heartbeat sweeping the grid ──
+                            // Sweeps left-to-right once per beat on empty cells; dot density
+                            // follows wave intensity so the leading edge blazes hardest.
+                            if final_density_idx == 0 && bpm_wave_active_frame {
+                                // ticks_per_bar is 4 beats; divide by 4 for one beat
+                                let ticks_per_beat_f = (ticks_per_bar / 4.0).max(1.0);
+                                let beat_phase = (t % ticks_per_beat_f) / ticks_per_beat_f;
+                                let wave_x = beat_phase * COLS as f32;
+                                let dist_from_wave = (cu as f32 - wave_x).abs();
+                                let wave_width = 5.0_f32;
+                                if dist_from_wave < wave_width {
+                                    let wave_intensity = (1.0 - dist_from_wave / wave_width) * energy;
+                                    let wh = col.wrapping_mul(2246822507)
+                                        .wrapping_add(row.wrapping_mul(1664525))
+                                        .wrapping_add(self.anim_tick as u32 * 48271);
+                                    let wave_roll = ((wh >> 16) & 0xFF) as f32 / 255.0;
+                                    if wave_roll < wave_intensity * 0.30 {
+                                        const WAVE_PATS: [[usize; 4]; 4] = [
+                                            [135, 136, 138, 142],   // 1-dot sparse
+                                            [137, 139, 141, 190],   // 2-3 dot medium
+                                            [149, 161, 183, 165],   // 4-dot full
+                                            [197, 279, 335, 389],   // 5-8 dot dense
+                                        ];
+                                        let tier = ((wave_intensity * 4.0) as usize).min(3);
+                                        final_density_idx = WAVE_PATS[tier][(wh >> 18) as usize % 4];
+                                        let wc = palette.chart[0];
+                                        let wa = wave_intensity * 0.55;
+                                        r = r + (wc.r - r) * wa;
+                                        g = g + (wc.g - g) * wa;
+                                        b = b + (wc.b - b) * wa;
                                     }
                                 }
                             }
@@ -2141,7 +2349,8 @@ impl Model for EditorData {
                             }
 
                             // Braille edge fringe — halftone penumbra on empty cells adjacent to content
-                            if final_density_idx == 0 && base_raw == 0.0 {
+                            // V8: only in IDLE/FLOW state (fringe_active)
+                            if final_density_idx == 0 && base_raw == 0.0 && fringe_active {
                                 let n_raw = self.ascii_bank.get_cell(core_img, bank_col_base, src_row.wrapping_sub(1));
                                 let s_raw = self.ascii_bank.get_cell(core_img, bank_col_base, src_row + 1);
                                 let e_raw = self.ascii_bank.get_cell(core_img, bank_col_base + 1, src_row);
@@ -2153,7 +2362,7 @@ impl Model for EditorData {
                                         .wrapping_add((ru as u32).wrapping_mul(7919))
                                         .wrapping_add((self.anim_tick as u32 / 8).wrapping_mul(1664525));
                                     let fringe_roll = ((fh >> 16) & 0xFF) as f32 / 255.0;
-                                    let fringe_prob = neighbors as f32 * 0.22 * (0.4 + energy * 0.6);
+                                    let fringe_prob = neighbors as f32 * 0.22 * (0.4 + energy * 0.6) * fringe_swell;
                                     if fringe_roll < fringe_prob {
                                         final_density_idx = ASCII_CHARSET_LEN + 3 + ((fh >> 8) as usize % 12);
                                         let alpha = 0.06 + neighbors as f32 * 0.04 + energy * 0.05;
@@ -2165,17 +2374,17 @@ impl Model for EditorData {
                                 }
                             }
 
-                            // Braille ambient grain — film-grain texture in empty background areas
-                            if final_density_idx == 0 {
+                            // Braille ambient grain — IDLE state only (V8: state-gated, breathes, frame palette)
+                            if final_density_idx == 0 && ambient_grain_active {
                                 let gh = (cu as u32).wrapping_mul(1013904223)
                                     .wrapping_add((ru as u32).wrapping_mul(1664525))
                                     .wrapping_add((self.anim_tick as u32 / 4).wrapping_mul(6364136));
                                 let grain_roll = ((gh >> 16) & 0xFF) as f32 / 255.0;
-                                let grain_prob = 0.012 + energy * 0.010;
+                                let grain_prob = (0.018 + energy * 0.022) * breath_mod * beat_gate;
                                 if grain_roll < grain_prob {
-                                    const GRAIN_DOTS: [usize; 8] = [135, 136, 138, 142, 150, 166, 198, 262];
-                                    final_density_idx = GRAIN_DOTS[(gh >> 8) as usize % 8];
-                                    let alpha = 0.08 + energy * 0.06;
+                                    let pat = (gh >> 8) as usize % 4;
+                                    final_density_idx = braille_frame_palette[pat];
+                                    let alpha = 0.08 + energy * 0.09;
                                     let pc = palette.primary;
                                     r = r + (pc.r - r) * alpha;
                                     g = g + (pc.g - g) * alpha;
@@ -2186,22 +2395,24 @@ impl Model for EditorData {
                             // Vertical rain — intermittent braille drops, epoch-gated per column
                             // Epoch (~64 dust_tick ticks ≈ 1s) controls which columns are "active".
                             // ~30% of epochs active per column → rain appears, fades, reappears randomly.
-                            if final_density_idx == 0 && energy > 0.10 {
+                            if final_density_idx == 0 && ambient_rain_active {
                                 let col_hash = col.wrapping_mul(2246822507).wrapping_add(987654321u32);
                                 let col_phase = col_hash >> 16;
                                 let epoch = dust_tick.wrapping_add(col_phase) / 64;
                                 let epoch_hash = epoch.wrapping_mul(1664525).wrapping_add(col_hash);
                                 if (epoch_hash >> 16) & 0xFF < 77 { // ~30% of epochs on
                                     let rain_phase = (col_hash ^ epoch.wrapping_mul(48271)) >> 20;
-                                    let drop_speed = (5u32).saturating_sub((energy * 3.0) as u32).max(2);
+                                    // V9: rain bar modulation — faster at bar start, eases mid-bar
+                                    let drop_speed = ((5.0 * rain_bar_mod - energy * 3.0).max(2.0)) as u32;
                                     let drop_pos = (dust_tick / drop_speed + rain_phase) % ROWS;
                                     let dist_from_drop = (row + ROWS - drop_pos) % ROWS;
                                     if dist_from_drop < 2 {
                                         let roll_h = col_hash.wrapping_add(epoch.wrapping_mul(22695477));
                                         let rain_prob = 0.30 + energy * 0.25;
                                         if ((roll_h >> 8) & 0xFF) as f32 / 255.0 < rain_prob {
-                                            const RAIN_DOTS: [usize; 4] = [135, 136, 138, 150];
-                                            final_density_idx = RAIN_DOTS[(col_hash >> 4) as usize % 4];
+                                            // Single-dot and vertical-pair patterns for drip feel
+                                    const RAIN_DOTS: [usize; 8] = [135, 136, 138, 150, 137, 140, 141, 198];
+                                            final_density_idx = RAIN_DOTS[(col_hash >> 4) as usize % 8];
                                             let fade = 1.0 - dist_from_drop as f32 * 0.4;
                                             let alpha = fade * (0.13 + energy * 0.14);
                                             let rc = palette.chart[0];
@@ -2306,6 +2517,9 @@ impl Model for EditorData {
                                 }
                             }
 
+                            // V8: Global braille tint removed — each effect sets its own semantic color.
+                            // Image braille renders in palette.primary like all art (no flattening).
+
                             // V5: Per-preset signature behaviors (step 19)
                             let (sr, sg, sb) = signature_tick(
                                 self.preset_idx, col, row, energy,
@@ -2373,8 +2587,24 @@ impl Model for EditorData {
                                     frame_buffer.pixels[idx + 1] = to_u8(eg);
                                     frame_buffer.pixels[idx + 2] = to_u8(eb);
                                     frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
-                                    // Ghost chars: cap at 20 for ASCII, but preserve braille indices exactly
-                                    frame_buffer.char_indices[idx / 4] = if raw as usize >= BRAILLE_CHARSET_START { raw } else { raw.min(20) };
+                                    // Ghost chars: alternate between original ASCII caps and braille trails
+                                    // — odd echo ages use the classic sparse-ASCII ghost,
+                                    //   even echo ages smear into braille with fading dot count.
+                                    let ghost_idx = if raw as usize >= BRAILLE_CHARSET_START {
+                                        raw as usize // braille source cell: preserve exactly either way
+                                    } else if echo_age % 2 == 1 {
+                                        // Original: sparse low-density ASCII character
+                                        raw.min(20) as usize
+                                    } else {
+                                        // Braille trail: dot density fades with age
+                                        let dot_bits: u8 = match echo_age {
+                                            0 | 1 => 0b00111111, // 6 dots — freshest ghost
+                                            2     => 0b00001111, // 4 dots
+                                            _     => 0b00000011, // 2 dots — oldest
+                                        };
+                                        BRAILLE_CHARSET_START + dot_bits as usize
+                                    };
+                                    frame_buffer.char_indices[idx / 4] = ghost_idx as u16;
                                 }
                             }
                         }
@@ -2541,6 +2771,9 @@ pub(crate) fn create(
                 intent_mode_bars: 0.0,
                 spark_frames: 0,
                 ring_frames: 0,
+                scheduled_sparks: None,
+                scheduled_ring: None,
+                pending_moment: None,
                 transition_kind: 0,
                 prev_core_cycle: usize::MAX,
             }

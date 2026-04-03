@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sssssssssampler — Theme Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0c0c14;
+  --sidebar-bg: #12121e;
+  --panel-bg: #181824;
+  --border: #2a2a3a;
+  --text: #c8c8d8;
+  --text-dim: #6868a0;
+  --text-bright: #e8e8f8;
+  --input-bg: #0e0e1a;
+  --input-border: #3a3a5a;
+  --accent: #8888ff;
+}
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Layout ── */
+#app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+/* Preview strip */
+#preview-strip {
+  flex-shrink: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 18px;
+  letter-spacing: 2px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+  transition: background 0.2s;
+}
+#preview-ascii { flex: 1; font-size: 18px; letter-spacing: 3px; transition: color 0.2s; }
+#preview-charts {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: 16px;
+}
+.preview-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.2s;
+}
+#preview-label {
+  position: absolute;
+  right: 16px;
+  bottom: 4px;
+  font-size: 10px;
+  opacity: 0.4;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Main content area */
+#main { display: flex; flex: 1; overflow: hidden; }
+
+/* Sidebar */
+#sidebar {
+  width: 130px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.sidebar-header {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  padding: 8px 12px 4px;
+}
+.theme-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  color: var(--text-dim);
+  transition: all 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.theme-item:hover { background: #1a1a2e; color: var(--text); }
+.theme-item.active {
+  border-left-color: var(--accent);
+  background: #1e1e30;
+  color: var(--text-bright);
+}
+.theme-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* Content panels */
+#content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Mode tabs */
+.mode-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 12px;
+}
+.mode-tab {
+  padding: 4px 14px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: all 0.15s;
+  border-radius: 3px;
+}
+.mode-tab:hover { color: var(--text); border-color: var(--text-dim); }
+.mode-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0c0c14;
+  font-weight: bold;
+}
+
+/* Left panel — coco ref */
+#ref-panel {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 16px;
+}
+.panel-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Right panel — sampler editor */
+#editor-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--bg);
+}
+
+/* Swatch rows */
+.swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  height: 26px;
+}
+.swatch-label {
+  width: 70px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+.swatch-box {
+  width: 28px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid #ffffff18;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.swatch-hex {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: inherit;
+}
+
+/* Editable swatch rows */
+.edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  height: 26px;
+}
+.edit-label {
+  width: 76px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+.color-picker-wrap {
+  position: relative;
+  width: 28px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.color-picker-wrap input[type=color] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  padding: 0;
+  border: none;
+}
+.color-swatch-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  border: 1px solid #ffffff18;
+  pointer-events: none;
+}
+.hex-input {
+  width: 72px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  outline: none;
+}
+.hex-input:focus { border-color: var(--accent); }
+
+/* Chart rows */
+.chart-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  height: 26px;
+}
+.chart-label {
+  width: 56px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+.lch-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  width: 14px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.lch-input {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  outline: none;
+  text-align: center;
+}
+.lch-input:focus { border-color: var(--accent); }
+.lch-input.l-input { width: 46px; }
+.lch-input.c-input { width: 50px; }
+.lch-input.h-input { width: 44px; }
+.chart-swatch {
+  width: 28px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid #ffffff18;
+  flex-shrink: 0;
+}
+
+/* Section separators */
+.section-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 12px 0;
+}
+.section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+/* Copy buttons */
+.copy-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+.copy-btn {
+  flex: 1;
+  padding: 7px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.copy-btn.copied { background: var(--accent); color: #0c0c14; border-color: var(--accent); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a4a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #4a4a7a; }
+
+/* Hex ↔ OKLCH converter widget */
+#converter {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  width: 280px;
+  z-index: 900;
+  font-size: 11px;
+}
+#converter .conv-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+#converter .conv-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+#conv-in {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  outline: none;
+}
+#conv-in:focus { border-color: var(--accent); }
+#conv-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  border: 1px solid #ffffff18;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+#conv-out {
+  flex: 1;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  outline: none;
+  cursor: text;
+  user-select: all;
+}
+#conv-out:empty::before { content: '—'; color: var(--text-dim); }
+
+/* Notification toast */
+#toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--accent);
+  color: #0c0c14;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  z-index: 1000;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="preview-strip">
+    <div id="preview-ascii">▓▒░ ⣿⢿⡿ ## ## ## ░▒▓</div>
+    <div id="preview-charts">
+      <div class="preview-dot" id="pc0">⣿</div>
+      <div class="preview-dot" id="pc1">⢿</div>
+      <div class="preview-dot" id="pc2">⡿</div>
+      <div class="preview-dot" id="pc3">⣾</div>
+    </div>
+    <div id="preview-label">preview</div>
+  </div>
+  <div id="main">
+    <div id="sidebar">
+      <div class="sidebar-header">Themes</div>
+      <div id="theme-list"></div>
+    </div>
+    <div id="content">
+      <div id="ref-panel">
+        <div class="panel-title">coco-skream ref</div>
+        <div class="mode-tabs">
+          <button class="mode-tab active" id="ref-dark-tab" onclick="setMode('dark')">dark</button>
+          <button class="mode-tab" id="ref-light-tab" onclick="setMode('light')">light</button>
+        </div>
+        <div id="ref-content"></div>
+      </div>
+      <div id="editor-panel">
+        <div id="editor-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="converter">
+  <div class="conv-title">hex ↔ oklch</div>
+  <div class="conv-row">
+    <input type="text" id="conv-in" placeholder="#FF64A9 or 0.75 0.18 340" oninput="runConvert()">
+    <div id="conv-swatch"></div>
+  </div>
+  <div class="conv-row" style="margin-bottom:0">
+    <div id="conv-out" onclick="this.focus();document.execCommand('selectAll')"></div>
+    <button id="conv-copy-btn" onclick="convCopy()" style="
+      background:var(--panel-bg);border:1px solid var(--border);color:var(--text-dim);
+      font-family:inherit;font-size:10px;padding:3px 7px;border-radius:3px;cursor:pointer;
+      flex-shrink:0;letter-spacing:0.5px;transition:all 0.15s
+    " onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+       onmouseout="if(!this.classList.contains('copied')){this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'}">
+      copy
+    </button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+// ── Hex to OKLCh conversion ──────────────────────────────────────────────────
+function hexToOklch(hex) {
+  hex = hex.trim().replace(/^#/, '');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  if (hex.length !== 6) return null;
+  // sRGB → linear
+  const fromSrgb = x => { x /= 255; return x <= 0.04045 ? x/12.92 : ((x+0.055)/1.055)**2.4; };
+  const r = fromSrgb(parseInt(hex.slice(0,2),16));
+  const g = fromSrgb(parseInt(hex.slice(2,4),16));
+  const b = fromSrgb(parseInt(hex.slice(4,6),16));
+  // linear sRGB → OKLab
+  const l_ = Math.cbrt(0.4122214708*r + 0.5363325363*g + 0.0514459929*b);
+  const m_ = Math.cbrt(0.2119034982*r + 0.6806995451*g + 0.1073969566*b);
+  const s_ = Math.cbrt(0.0883024619*r + 0.2817188376*g + 0.6299787005*b);
+  const L = 0.2104542553*l_ + 0.7936177850*m_ - 0.0040720468*s_;
+  const a = 1.9779984951*l_ - 2.4285922050*m_ + 0.4505937099*s_;
+  const bv= 0.0259040371*l_ + 0.7827717662*m_ - 0.8086757660*s_;
+  // OKLab → OKLCh
+  const C = Math.sqrt(a*a + bv*bv);
+  let H = Math.atan2(bv, a) * 180 / Math.PI;
+  if (H < 0) H += 360;
+  return { L: Math.round(L*1000)/1000, C: Math.round(C*1000)/1000, H: Math.round(H*10)/10 };
+}
+
+// ── OKLCh to hex conversion ──────────────────────────────────────────────────
+function oklchToHex(L, C, H) {
+  const h = H * Math.PI / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l_ = L + 0.3963377774*a + 0.2158037573*b;
+  const m_ = L - 0.1055613458*a - 0.0638541728*b;
+  const s_ = L - 0.0894841775*a - 1.2914855480*b;
+  const l3 = l_**3, m3 = m_**3, s3 = s_**3;
+  const r = Math.max(0,Math.min(1, 4.0767416621*l3 - 3.3077115913*m3 + 0.2309699292*s3));
+  const g = Math.max(0,Math.min(1,-1.2684380046*l3 + 2.6097574011*m3 - 0.3413193965*s3));
+  const bv= Math.max(0,Math.min(1,-0.0041960863*l3 - 0.7034186147*m3 + 1.7076147010*s3));
+  const toSrgb = x => x <= 0.0031308 ? 12.92*x : 1.055*x**(1/2.4)-0.055;
+  const ri = Math.round(toSrgb(r)*255), gi = Math.round(toSrgb(g)*255), bi = Math.round(toSrgb(bv)*255);
+  return '#'+[ri,gi,bi].map(v=>v.toString(16).padStart(2,'0')).join('');
+}
+
+// ── Coco-skream reference data ───────────────────────────────────────────────
+const COCO = {
+  pink:       { dark:  {bg:[0.18,0.02,340], primary:[0.82,0.2,340], accent:[0.72,0.2,355], chart:[[0.75,0.18,340],[0.70,0.15,25],[0.65,0.12,300],[0.80,0.20,350]]},
+                light: {bg:[0.99,0.005,340],primary:[0.7,0.18,340],  accent:[0.88,0.18,355],chart:[[0.7,0.18,340],[0.8,0.15,25],[0.8,0.12,300],[0.65,0.2,350]]} },
+  kerama:     { dark:  {bg:[0.16,0.03,250], primary:[0.7,0.16,245],  accent:[0.5,0.14,245], chart:[[0.7,0.16,245],[0.65,0.14,230],[0.6,0.12,260],[0.75,0.15,240]]},
+                light: {bg:[0.985,0.008,240],primary:[0.55,0.18,250],accent:[0.75,0.14,195],chart:[[0.55,0.18,250],[0.65,0.14,195],[0.65,0.12,260],[0.5,0.16,240]]} },
+  brazil:     { dark:  {bg:[0.18,0.04,145], primary:[0.65,0.2,145],  accent:[0.85,0.18,95], chart:[[0.65,0.2,145],[0.88,0.17,95],[0.55,0.16,155],[0.75,0.2,120]]},
+                light: {bg:[0.98,0.01,145], primary:[0.48,0.18,145], accent:[0.9,0.18,95],  chart:[[0.48,0.18,145],[0.88,0.17,95],[0.35,0.14,265],[0.55,0.16,145]]} },
+  noni:       { dark:  {bg:[0.2,0.035,118], primary:[0.62,0.18,118], accent:[0.7,0.2,122],  chart:[[0.62,0.18,118],[0.72,0.2,122],[0.58,0.16,128],[0.55,0.14,118]]},
+                light: {bg:[0.96,0.012,118],primary:[0.56,0.18,118], accent:[0.86,0.16,122],chart:[[0.56,0.18,118],[0.84,0.15,122],[0.6,0.14,128],[0.5,0.16,118]]} },
+  paris:      { dark:  {bg:[0.16,0.03,328], primary:[0.8,0.28,328],  accent:[0.75,0.22,88], chart:[[0.78,0.28,328],[0.9,0.22,88],[0.6,0.18,300],[0.72,0.22,340]]},
+                light: {bg:[0.99,0.008,328],primary:[0.65,0.28,328], accent:[0.88,0.2,88],  chart:[[0.65,0.28,328],[0.85,0.2,88],[0.5,0.2,300],[0.6,0.22,340]]} },
+  rooney:     { dark:  {bg:[0.15,0.04,22],  primary:[0.75,0.28,22],  accent:[0.82,0.2,78],  chart:[[0.58,0.3,22],[0.82,0.2,78],[0.48,0.28,22],[0.72,0.22,35]]},
+                light: {bg:[0.97,0.01,22],  primary:[0.55,0.28,22],  accent:[0.78,0.2,78],  chart:[[0.55,0.28,22],[0.78,0.2,78],[0.4,0.26,10],[0.65,0.22,32]]} },
+  'k+k':      { dark:  {bg:[0.18,0.005,250],primary:[0.75,0.04,250], accent:[0.55,0.03,250],chart:[[0.78,0.06,250],[0.65,0.05,100],[0.55,0.06,280],[0.88,0.03,180]]},
+                light: {bg:[0.97,0.005,250],primary:[0.35,0.015,250],accent:[0.6,0.01,250], chart:[[0.22,0.012,260],[0.4,0.01,230],[0.32,0.008,280],[0.52,0.008,250]]} },
+  catppuccin: { dark:  {bg:[0.2,0.03,305],  primary:[0.78,0.14,305], accent:[0.72,0.15,265],chart:[[0.76,0.14,305],[0.75,0.13,265],[0.7,0.14,190],[0.74,0.15,130]]},
+                light: {bg:[0.97,0.01,300], primary:[0.55,0.24,300], accent:[0.65,0.22,258],chart:[[0.35,0.26,300],[0.45,0.24,258],[0.4,0.2,180],[0.52,0.18,145]]} },
+  kanagawa:   { dark:  {bg:[0.18,0.04,248], primary:[0.68,0.2,248],  accent:[0.72,0.2,80],  chart:[[0.65,0.22,222],[0.76,0.24,80],[0.6,0.2,200],[0.72,0.22,55]]},
+                light: {bg:[0.92,0.03,248], primary:[0.45,0.18,222], accent:[0.62,0.2,80],  chart:[[0.35,0.18,222],[0.48,0.26,72],[0.4,0.18,148],[0.5,0.2,8]]} },
+  'rose pine':{ dark:  {bg:[0.18,0.02,340], primary:[0.72,0.24,0],   accent:[0.72,0.22,300],chart:[[0.62,0.26,0],[0.68,0.24,300],[0.58,0.22,20],[0.65,0.2,332]]},
+                light: {bg:[0.95,0.02,340], primary:[0.52,0.2,5],    accent:[0.58,0.2,295], chart:[[0.36,0.18,5],[0.42,0.22,295],[0.4,0.14,195],[0.52,0.2,80]]} },
+  dracula:    { dark:  {bg:[0.2,0.02,295],  primary:[0.78,0.18,295], accent:[0.72,0.22,340],chart:[[0.74,0.18,295],[0.72,0.22,340],[0.72,0.18,170],[0.78,0.15,75]]},
+                light: {bg:[0.97,0.01,295], primary:[0.5,0.24,295],  accent:[0.55,0.26,340],chart:[[0.34,0.26,295],[0.45,0.28,340],[0.4,0.22,170],[0.52,0.18,290]]} },
+  papaya:     { dark:  {bg:[0.12,0.005,50], primary:[0.68,0.28,50],  accent:[0.75,0.24,35], chart:[[0.65,0.28,50],[0.75,0.24,35],[0.7,0.22,68],[0.58,0.3,42]]},
+                light: {bg:[0.97,0.01,50],  primary:[0.5,0.26,42],   accent:[0.6,0.22,60],  chart:[[0.38,0.26,42],[0.52,0.28,60],[0.3,0.05,50],[0.55,0.22,55]]} },
+  dr:         { dark:  {bg:[0.16,0.04,264], primary:[0.65,0.24,264], accent:[0.6,0.22,22],  chart:[[0.6,0.26,264],[0.56,0.24,22],[0.65,0.24,240],[0.68,0.22,32]]},
+                light: {bg:[0.97,0.01,264], primary:[0.42,0.22,264], accent:[0.5,0.2,22],   chart:[[0.3,0.26,264],[0.4,0.28,22],[0.36,0.24,242],[0.5,0.22,38]]} },
+  calsonic:   { dark:  {bg:[0.16,0.04,258], primary:[0.65,0.24,258], accent:[0.65,0.22,20], chart:[[0.6,0.26,258],[0.68,0.24,20],[0.65,0.24,240],[0.65,0.22,38]]},
+                light: {bg:[0.97,0.01,258], primary:[0.42,0.2,258],  accent:[0.55,0.22,18], chart:[[0.3,0.22,258],[0.46,0.24,18],[0.36,0.2,240],[0.52,0.18,32]]} },
+};
+
+// ── Sampler current palette data ─────────────────────────────────────────────
+const SAMPLER = {
+  pink: {
+    dark:  {bg:'#2D1028',primary:'#FF88EB',emphasis:'#FF64A9',sec:['#FF64A9','#F3EBF0','#968991','#4D2842'],chart:[[0.75,0.18,340],[0.70,0.15,25],[0.65,0.12,300],[0.80,0.20,350]]},
+    light: {bg:'#FAEEF6',primary:'#B5007A',emphasis:'#8B0057',sec:['#8B0057','#2C2329','#796C74','#D098B8'],chart:[[0.38,0.22,340],[0.52,0.26,310],[0.45,0.20,358],[0.58,0.15,325]]}
+  },
+  kerama: {
+    dark:  {bg:'#0E1830',primary:'#31A4FA',emphasis:'#0067AB',sec:['#0067AB','#D9E5F0','#71889B','#283858'],chart:[[0.65,0.26,250],[0.68,0.24,195],[0.73,0.20,225],[0.60,0.26,270]]},
+    light: {bg:'#E0EEF8',primary:'#004DA8',emphasis:'#007BA0',sec:['#007BA0','#10202C','#526578','#90B0D8'],chart:[[0.32,0.24,250],[0.48,0.22,195],[0.40,0.20,270],[0.55,0.18,215]]}
+  },
+  brazil: {
+    dark:  {bg:'#0C1030',primary:'#10922C',emphasis:'#FFDA24',sec:['#FFDA24','#DBE7DB','#839283','#283858'],chart:[[0.65,0.28,145],[0.88,0.20,92],[0.60,0.26,158],[0.76,0.24,112]]},
+    light: {bg:'#DEF0DE',primary:'#005A00',emphasis:'#D4B000',sec:['#D4B000','#1A202C','#586379','#88C888'],chart:[[0.35,0.22,145],[0.55,0.28,88],[0.42,0.18,162],[0.52,0.20,130]]}
+  },
+  noni: {
+    dark:  {bg:'#151805',primary:'#7D9100',emphasis:'#99B741',sec:['#99B741','#DBDFCD','#828968','#3F4720'],chart:[[0.68,0.28,118],[0.76,0.26,122],[0.62,0.24,135],[0.82,0.20,100]]},
+    light: {bg:'#D0D8B8',primary:'#6C7E00',emphasis:'#BEE05F',sec:['#BEE05F','#33391D','#53593B','#283010'],chart:[[0.33,0.20,118],[0.50,0.26,105],[0.40,0.18,135],[0.55,0.16,118]]}
+  },
+  paris: {
+    dark:  {bg:'#1A0818',primary:'#FF5FFF',emphasis:'#FFC273',sec:['#FFC273','#F2EBF1','#8F7E8D','#482840'],chart:[[0.78,0.28,328],[0.90,0.22,88],[0.60,0.18,300],[0.72,0.22,340]]},
+    light: {bg:'#F8EEFF',primary:'#A800B0',emphasis:'#6B0097',sec:['#6B0097','#1A0D1C','#726270','#D098C0'],chart:[[0.36,0.28,328],[0.50,0.22,295],[0.42,0.26,350],[0.58,0.18,315]]}
+  },
+  rooney: {
+    dark:  {bg:'#140001',primary:'#FFB000',emphasis:'#FFAD00',sec:['#FFAD00','#FBF2F1','#996C69','#4C1013'],chart:[[0.58,0.30,22],[0.82,0.20,78],[0.48,0.28,22],[0.72,0.22,35]]},
+    light: {bg:'#F5E8E4',primary:'#A00000',emphasis:'#C07000',sec:['#C07000','#1E0C0C','#825D5C','#D08878'],chart:[[0.34,0.28,22],[0.50,0.24,45],[0.40,0.26,10],[0.55,0.22,32]]}
+  },
+  'k+k': {
+    dark:  {bg:'#1A1A20',primary:'#B0B6BF',emphasis:'#33363A',sec:['#33363A','#E6EAF1','#7B7F85','#383840'],chart:[[0.78,0.06,250],[0.65,0.05,100],[0.55,0.06,280],[0.88,0.03,180]]},
+    light: {bg:'#ECEEF2',primary:'#282D34',emphasis:'#C0C4CC',sec:['#C0C4CC','#16181C','#6D7176','#C0C0C8'],chart:[[0.22,0.012,260],[0.40,0.010,230],[0.32,0.008,280],[0.52,0.008,250]]}
+  },
+  catppuccin: {
+    dark:  {bg:'#1E1028',primary:'#C497F7',emphasis:'#84AAFF',sec:['#84AAFF','#C2D3F5','#90A0C0','#382850'],chart:[[0.76,0.14,305],[0.75,0.13,265],[0.70,0.14,190],[0.74,0.15,130]]},
+    light: {bg:'#E6E9F0',primary:'#7F00CC',emphasis:'#1E66F5',sec:['#1E66F5','#3C3F5A','#6A738B','#A088C0'],chart:[[0.35,0.26,300],[0.45,0.24,258],[0.40,0.20,180],[0.52,0.18,145]]}
+  },
+  kanagawa: {
+    dark:  {bg:'#101828',primary:'#6BB1CA',emphasis:'#DD9700',sec:['#DD9700','#E4D5B1','#6C6151','#282038'],chart:[[0.65,0.22,222],[0.76,0.24,80],[0.60,0.20,200],[0.72,0.22,55]]},
+    light: {bg:'#D5C4A1',primary:'#1A5E72',emphasis:'#AA6C00',sec:['#AA6C00','#3A3A4A','#6B5E48','#A89868'],chart:[[0.35,0.18,222],[0.48,0.26,72],[0.40,0.18,148],[0.50,0.20,8]]}
+  },
+  'rose pine': {
+    dark:  {bg:'#10101C',primary:'#DF6B93',emphasis:'#C1A2E7',sec:['#C1A2E7','#DCDDFF','#635883','#302838'],chart:[[0.62,0.26,0],[0.68,0.24,300],[0.58,0.22,20],[0.65,0.20,332]]},
+    light: {bg:'#EEE4D4',primary:'#8B2252',emphasis:'#5C3F87',sec:['#5C3F87','#3A3049','#89839D','#C8B898'],chart:[[0.36,0.18,5],[0.42,0.22,295],[0.40,0.14,195],[0.52,0.20,80]]}
+  },
+  dracula: {
+    dark:  {bg:'#1C1828',primary:'#B38EFF',emphasis:'#F860CD',sec:['#F860CD','#F8F6FE','#48619A','#382848'],chart:[[0.74,0.18,295],[0.72,0.22,340],[0.72,0.18,170],[0.78,0.15,75]]},
+    light: {bg:'#E8E4F5',primary:'#6020C0',emphasis:'#CC0088',sec:['#CC0088','#1A1B28','#48619A','#B098C8'],chart:[[0.34,0.26,295],[0.45,0.28,340],[0.40,0.22,170],[0.52,0.18,290]]}
+  },
+  papaya: {
+    dark:  {bg:'#0C0C0C',primary:'#FF6E00',emphasis:'#FF9736',sec:['#FF9736','#EFEDEA','#7F7F7F','#2C2C2C'],chart:[[0.65,0.28,50],[0.75,0.24,35],[0.70,0.22,68],[0.58,0.30,42]]},
+    light: {bg:'#F0EAE0',primary:'#C04800',emphasis:'#A03000',sec:['#A03000','#0C0C0C','#5D5D5D','#D0C8B8'],chart:[[0.38,0.26,42],[0.52,0.28,60],[0.30,0.05,50],[0.55,0.22,55]]}
+  },
+  dr: {
+    dark:  {bg:'#101840',primary:'#4E83DE',emphasis:'#DB898B',sec:['#DB898B','#D0D8F0','#6878A0','#283060'],chart:[[0.60,0.26,264],[0.56,0.24,22],[0.65,0.24,240],[0.68,0.22,32]]},
+    light: {bg:'#D8E8F8',primary:'#1840A0',emphasis:'#A02020',sec:['#A02020','#080820','#486090','#98A8C8'],chart:[[0.30,0.26,264],[0.40,0.28,22],[0.36,0.24,242],[0.50,0.22,38]]}
+  },
+  calsonic: {
+    dark:  {bg:'#101838',primary:'#4E83DE',emphasis:'#DB898B',sec:['#DB898B','#F1F1F1','#67788D','#283058'],chart:[[0.60,0.26,258],[0.68,0.24,20],[0.65,0.24,240],[0.65,0.22,38]]},
+    light: {bg:'#D0DFEE',primary:'#1A4A9A',emphasis:'#A04040',sec:['#A04040','#001830','#54698A','#98A8C8'],chart:[[0.30,0.22,258],[0.46,0.24,18],[0.36,0.20,240],[0.52,0.18,32]]}
+  },
+};
+
+const THEMES = ['pink','kerama','brazil','noni','paris','rooney','k+k','catppuccin','kanagawa','rose pine','dracula','papaya','dr','calsonic'];
+
+// Map theme key to Rust function name
+function rustName(key) {
+  if (key === 'k+k') return 'kk';
+  if (key === 'rose pine') return 'rosepine';
+  if (key === 'dr') return 'dominican';
+  return key.toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const state = {
+  theme: 'pink',
+  mode: 'dark',
+  edits: {}  // keyed by "theme|mode|slot" -> value
+};
+
+function editKey(theme, mode, slot) { return `${theme}|${mode}|${slot}`; }
+
+function getVal(theme, mode, slot) {
+  const k = editKey(theme, mode, slot);
+  if (state.edits[k] !== undefined) return state.edits[k];
+  const d = SAMPLER[theme][mode];
+  if (slot === 'bg') return d.bg;
+  if (slot === 'primary') return d.primary;
+  if (slot === 'emphasis') return d.emphasis;
+  if (slot.startsWith('sec')) return d.sec[parseInt(slot.slice(3))];
+  if (slot.startsWith('chart')) {
+    const i = parseInt(slot.slice(5));
+    return d.chart[i]; // returns [L,C,H]
+  }
+  return null;
+}
+
+function setVal(theme, mode, slot, val) {
+  state.edits[editKey(theme, mode, slot)] = val;
+}
+
+// ── Hex input <-> color picker sync helper ────────────────────────────────────
+function normalizeHex(h) {
+  h = h.trim().replace(/^#/,'');
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if (h.length !== 6) return null;
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  return '#' + h.toUpperCase();
+}
+
+// ── Build sidebar ─────────────────────────────────────────────────────────────
+function buildSidebar() {
+  const list = document.getElementById('theme-list');
+  list.innerHTML = '';
+  for (const t of THEMES) {
+    const item = document.createElement('div');
+    item.className = 'theme-item' + (t === state.theme ? ' active' : '');
+    item.dataset.theme = t;
+    // Get primary color for dot
+    const col = getVal(t, 'dark', 'primary');
+    const dot = `<span class="theme-dot" style="background:${col}"></span>`;
+    item.innerHTML = dot + t;
+    item.onclick = () => { state.theme = t; render(); };
+    list.appendChild(item);
+  }
+}
+
+// ── Build coco reference panel ────────────────────────────────────────────────
+function buildRefPanel() {
+  const ref = COCO[state.theme];
+  if (!ref) return;
+  const d = ref[state.mode];
+  const container = document.getElementById('ref-content');
+
+  const rows = [
+    ['bg',      d.bg],
+    ['primary', d.primary],
+    ['accent',  d.accent],
+    ['chart 0', d.chart[0]],
+    ['chart 1', d.chart[1]],
+    ['chart 2', d.chart[2]],
+    ['chart 3', d.chart[3]],
+  ];
+
+  let html = '';
+  for (const [label, lch] of rows) {
+    const hex = oklchToHex(...lch);
+    html += `<div class="swatch-row">
+      <span class="swatch-label">${label}</span>
+      <span class="swatch-box" style="background:${hex}"></span>
+      <span class="swatch-hex">${hex}</span>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+// ── Build editor panel ────────────────────────────────────────────────────────
+function buildEditorPanel() {
+  const t = state.theme;
+  const m = state.mode;
+  const container = document.getElementById('editor-content');
+
+  const hexSlots = [
+    ['bg',       'background'],
+    ['primary',  'primary'],
+    ['emphasis', 'emphasis'],
+    ['sec0',     'sec[0]'],
+    ['sec1',     'sec[1]'],
+    ['sec2',     'sec[2]'],
+    ['sec3',     'sec[3]'],
+  ];
+
+  let html = `<div class="mode-tabs">
+    <button class="mode-tab ${m==='dark'?'active':''}" onclick="setMode('dark')">dark</button>
+    <button class="mode-tab ${m==='light'?'active':''}" onclick="setMode('light')">light</button>
+  </div>`;
+
+  html += `<div class="section-label">hex colors</div>`;
+
+  for (const [slot, label] of hexSlots) {
+    const val = getVal(t, m, slot);
+    const hex = (typeof val === 'string') ? val : '#000000';
+    html += `<div class="edit-row" id="row-${slot}">
+      <span class="edit-label">${label}</span>
+      <div class="color-picker-wrap">
+        <input type="color" id="cp-${slot}" value="${hex.toLowerCase()}"
+          oninput="onColorPick('${slot}', this.value)"
+          onchange="onColorPick('${slot}', this.value)">
+        <div class="color-swatch-overlay" id="cs-${slot}" style="background:${hex}"></div>
+      </div>
+      <input type="text" class="hex-input" id="hi-${slot}" value="${hex.toUpperCase()}"
+        maxlength="7"
+        oninput="onHexInput('${slot}', this.value)"
+        onchange="onHexInput('${slot}', this.value)">
+    </div>`;
+  }
+
+  html += `<div class="section-sep"></div>`;
+  html += `<div class="section-label">chart colors (oklch)</div>`;
+
+  for (let i = 0; i < 4; i++) {
+    const slot = `chart${i}`;
+    const val = getVal(t, m, slot); // [L, C, H]
+    const [L, C, H] = val;
+    const hex = oklchToHex(L, C, H);
+    html += `<div class="chart-row" id="crow-${i}">
+      <span class="chart-label">chart[${i}]</span>
+      <span class="lch-label">L</span>
+      <input type="number" class="lch-input l-input" id="cl-${i}" value="${L.toFixed(2)}"
+        min="0" max="1" step="0.01" oninput="onLCH(${i})" onchange="onLCH(${i})"
+        onpaste="onLCHPaste(event,${i})">
+      <span class="lch-label">C</span>
+      <input type="number" class="lch-input c-input" id="cc-${i}" value="${C.toFixed(3)}"
+        min="0" max="0.4" step="0.005" oninput="onLCH(${i})" onchange="onLCH(${i})"
+        onpaste="onLCHPaste(event,${i})">
+      <span class="lch-label">H</span>
+      <input type="number" class="lch-input h-input" id="ch-${i}" value="${Math.round(H)}"
+        min="0" max="360" step="1" oninput="onLCH(${i})" onchange="onLCH(${i})"
+        onpaste="onLCHPaste(event,${i})">
+      <div class="chart-swatch" id="csw-${i}" style="background:${hex}"></div>
+    </div>`;
+  }
+
+  html += `<div class="section-sep"></div>`;
+  html += `<div class="copy-btns">
+    <button class="copy-btn" id="btn-copy-dark" onclick="copyRust('dark')">Copy Rust dark</button>
+    <button class="copy-btn" id="btn-copy-light" onclick="copyRust('light')">Copy Rust light</button>
+  </div>`;
+  html += `<div class="copy-btns" style="margin-top:8px">
+    <button class="copy-btn" id="btn-copy-all" onclick="copyAllRust()" style="background:#1e1e2e;border-color:#8888ff;color:#8888ff">Copy ALL Rust</button>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+// ── Update preview strip ──────────────────────────────────────────────────────
+function updatePreview() {
+  const t = state.theme;
+  const m = state.mode;
+  const bg = getVal(t, m, 'bg');
+  const primary = getVal(t, m, 'primary');
+  const charts = [0,1,2,3].map(i => {
+    const [L,C,H] = getVal(t, m, `chart${i}`);
+    return oklchToHex(L, C, H);
+  });
+
+  const strip = document.getElementById('preview-strip');
+  strip.style.background = bg;
+  document.getElementById('preview-ascii').style.color = primary;
+
+  for (let i = 0; i < 4; i++) {
+    const el = document.getElementById(`pc${i}`);
+    el.style.background = charts[i] + '40';
+    el.style.color = charts[i];
+  }
+
+  // Update CSS accent to chart0
+  document.documentElement.style.setProperty('--accent', charts[0]);
+}
+
+// ── Mode switch ───────────────────────────────────────────────────────────────
+function setMode(mode) {
+  state.mode = mode;
+  render();
+}
+
+// ── Color picker event handlers ───────────────────────────────────────────────
+function onColorPick(slot, value) {
+  const hex = normalizeHex(value);
+  if (!hex) return;
+  setVal(state.theme, state.mode, slot, hex);
+  // Sync hex input
+  const hi = document.getElementById(`hi-${slot}`);
+  if (hi && document.activeElement !== hi) hi.value = hex;
+  // Update swatch overlay
+  const cs = document.getElementById(`cs-${slot}`);
+  if (cs) cs.style.background = hex;
+  updatePreview();
+  updateSidebarDot();
+}
+
+function onHexInput(slot, value) {
+  const hex = normalizeHex(value);
+  if (!hex) return;
+  setVal(state.theme, state.mode, slot, hex);
+  // Sync color picker
+  const cp = document.getElementById(`cp-${slot}`);
+  if (cp) cp.value = hex.toLowerCase();
+  // Update swatch overlay
+  const cs = document.getElementById(`cs-${slot}`);
+  if (cs) cs.style.background = hex;
+  updatePreview();
+  updateSidebarDot();
+}
+
+function onLCHPaste(e, i) {
+  const text = (e.clipboardData || window.clipboardData).getData('text').trim();
+  const nums = text.split(/[\s,]+/).map(Number).filter(v => !isNaN(v));
+  if (nums.length !== 3) return; // let default paste handle it
+  e.preventDefault();
+  const [L, C, H] = nums;
+  document.getElementById(`cl-${i}`).value = L;
+  document.getElementById(`cc-${i}`).value = C;
+  document.getElementById(`ch-${i}`).value = H;
+  setVal(state.theme, state.mode, `chart${i}`, [L, C, H]);
+  const hex = oklchToHex(L, C, H);
+  const sw = document.getElementById(`csw-${i}`);
+  if (sw) sw.style.background = hex;
+  updatePreview();
+}
+
+function onLCH(i) {
+  const L = parseFloat(document.getElementById(`cl-${i}`).value) || 0;
+  const C = parseFloat(document.getElementById(`cc-${i}`).value) || 0;
+  const H = parseFloat(document.getElementById(`ch-${i}`).value) || 0;
+  setVal(state.theme, state.mode, `chart${i}`, [L, C, H]);
+  const hex = oklchToHex(L, C, H);
+  const sw = document.getElementById(`csw-${i}`);
+  if (sw) sw.style.background = hex;
+  updatePreview();
+}
+
+function updateSidebarDot() {
+  const item = document.querySelector(`.theme-item[data-theme="${CSS.escape(state.theme)}"]`);
+  if (!item) return;
+  const col = getVal(state.theme, 'dark', 'primary');
+  const dot = item.querySelector('.theme-dot');
+  if (dot) dot.style.background = col;
+}
+
+// ── Rust code generation ──────────────────────────────────────────────────────
+function genRustFn(theme, mode) {
+  const t = theme;
+  const m = mode;
+  const name = rustName(t);
+  const fnName = `${name}_${m}`;
+
+  const bg       = getVal(t, m, 'bg').replace('#','').toUpperCase();
+  const primary  = getVal(t, m, 'primary').replace('#','').toUpperCase();
+  const emphasis = getVal(t, m, 'emphasis').replace('#','').toUpperCase();
+  const sec0     = getVal(t, m, 'sec0').replace('#','').toUpperCase();
+  const sec1     = getVal(t, m, 'sec1').replace('#','').toUpperCase();
+  const sec2     = getVal(t, m, 'sec2').replace('#','').toUpperCase();
+  const sec3     = getVal(t, m, 'sec3').replace('#','').toUpperCase();
+
+  const charts = [0,1,2,3].map(i => {
+    const [L,C,H] = getVal(t, m, `chart${i}`);
+    return `        oklch_to_color(${L.toFixed(2)}, ${C.toFixed(3)}, ${parseFloat(H.toFixed(1))}),`;
+  });
+
+  return `    fn ${fnName}() -> Self {
+        let chart = [
+${charts.join('\n')}
+        ];
+        Self::build(0x${bg}, 0x${primary}, 0x${emphasis}, 0x${sec0}, 0x${sec1}, 0x${sec2}, 0x${sec3}, chart)
+    }`;
+}
+
+function copyRust(mode) {
+  const t = state.theme;
+  const code = genRustFn(t, mode);
+  navigator.clipboard.writeText(code).then(() => {
+    showToast(`Copied ${rustName(t)}_${mode}() to clipboard`);
+    const btn = document.getElementById(`btn-copy-${mode}`);
+    if (btn) {
+      btn.classList.add('copied');
+      btn.textContent = 'Copied!';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.textContent = `Copy Rust ${mode}`;
+      }, 1500);
+    }
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = code;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast(`Copied ${rustName(t)}_${mode}() to clipboard`);
+  });
+}
+
+function copyAllRust() {
+  const sections = [];
+  for (const t of THEMES) {
+    sections.push(genRustFn(t, 'dark'));
+    sections.push(genRustFn(t, 'light'));
+  }
+  const code = sections.join('\n\n');
+  const copy = text => {
+    if (navigator.clipboard) {
+      return navigator.clipboard.writeText(text);
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  };
+  copy(code).then(() => {
+    showToast('Copied all 28 palette functions to clipboard');
+    const btn = document.getElementById('btn-copy-all');
+    if (btn) {
+      btn.classList.add('copied');
+      btn.textContent = 'All Copied!';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.textContent = 'Copy ALL Rust';
+      }, 1500);
+    }
+  }).catch(() => showToast('Copy failed — try again'));
+}
+
+// ── Toast notification ────────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── Main render ───────────────────────────────────────────────────────────────
+function render() {
+  buildSidebar();
+  buildRefPanel();
+  buildEditorPanel();
+  updatePreview();
+
+  // Update ref mode tabs
+  document.getElementById('ref-dark-tab').className = 'mode-tab' + (state.mode==='dark'?' active':'');
+  document.getElementById('ref-light-tab').className = 'mode-tab' + (state.mode==='light'?' active':'');
+}
+
+// ── Converter copy button ─────────────────────────────────────────────────────
+function convCopy() {
+  const text = document.getElementById('conv-out').textContent.trim();
+  if (!text) return;
+  const btn = document.getElementById('conv-copy-btn');
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+  btn.textContent = '✓';
+  btn.classList.add('copied');
+  btn.style.borderColor = 'var(--accent)';
+  btn.style.color = 'var(--accent)';
+  setTimeout(() => {
+    btn.textContent = 'copy';
+    btn.classList.remove('copied');
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--text-dim)';
+  }, 1200);
+}
+
+// ── Hex ↔ OKLCH converter ─────────────────────────────────────────────────────
+function runConvert() {
+  const raw = document.getElementById('conv-in').value.trim();
+  const sw  = document.getElementById('conv-swatch');
+  const out = document.getElementById('conv-out');
+
+  // Try to parse as LCH string: "L C H" or "L, C, H" (3 numbers)
+  const nums = raw.split(/[\s,]+/).map(Number).filter(v => !isNaN(v) && raw.trim() !== '');
+  if (nums.length === 3 && !raw.startsWith('#') && !/^[0-9a-fA-F]{6}$/.test(raw)) {
+    const [L, C, H] = nums;
+    const hex = oklchToHex(L, C, H);
+    sw.style.background = hex;
+    out.textContent = hex.toUpperCase();
+    return;
+  }
+
+  // Try hex
+  const hex = normalizeHex(raw);
+  if (!hex) {
+    sw.style.background = 'transparent';
+    out.textContent = '';
+    return;
+  }
+  sw.style.background = hex;
+  const r = hexToOklch(hex);
+  if (!r) { out.textContent = ''; return; }
+  out.textContent = `${r.L}  ${r.C}  ${r.H}`;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>
