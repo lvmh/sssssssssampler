@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::SssssssssamplerParams;
 use crate::AnimationParams;
 use crate::ascii_image_display::AsciiImageDisplay;
-use crate::ascii_bank::{AsciiBank, ASCII_CHARSET_LEN};
+use crate::ascii_bank::{AsciiBank, ASCII_CHARSET_LEN, BRAILLE_CHARSET_START};
 use crate::render::color_system::ColorPalette;
 use std::sync::Mutex;
 
@@ -1804,11 +1804,40 @@ impl Model for EditorData {
                                     if slot.alpha > best_alpha {
                                         best_alpha = slot.alpha;
                                         // Depth-of-field glyph restriction
-                                        let clamped = match slot.depth {
-                                            0 => raw as usize,                         // Pulse: full charset
-                                            1 => (raw as usize).min(100),              // Accent: up to ▓ stipple
-                                            2 => (raw as usize).min(103),              // Drift: up to ½-blocks
-                                            _ => (raw as usize).min(55),               // Ghost: medium-weight ASCII
+                                        let ri = raw as usize;
+                                        let clamped = if ri >= BRAILLE_CHARSET_START {
+                                            // Braille depth-of-field: limit dot density per depth
+                                            // rather than substituting block elements.
+                                            let max_dots: u32 = match slot.depth {
+                                                0 => 8, // Pulse: all dots
+                                                1 => 6, // Accent: max 6 dots
+                                                2 => 4, // Drift: max 4 dots
+                                                _ => 2, // Ghost: max 2 dots (sparse)
+                                            };
+                                            let code = ri - BRAILLE_CHARSET_START;
+                                            if code.count_ones() <= max_dots {
+                                                ri // already within budget
+                                            } else {
+                                                // Clear highest-set bits until dot count ≤ max_dots
+                                                let mut c = code;
+                                                let mut bit = 7usize;
+                                                loop {
+                                                    if (c >> bit) & 1 == 1 {
+                                                        c &= !(1 << bit);
+                                                        if (c.count_ones()) <= max_dots { break; }
+                                                    }
+                                                    if bit == 0 { break; }
+                                                    bit -= 1;
+                                                }
+                                                BRAILLE_CHARSET_START + c
+                                            }
+                                        } else {
+                                            match slot.depth {
+                                                0 => ri,                  // Pulse: full charset
+                                                1 => ri.min(100),         // Accent: up to ▓ stipple
+                                                2 => ri.min(103),         // Drift: up to ½-blocks
+                                                _ => ri.min(55),          // Ghost: medium-weight ASCII
+                                            }
                                         };
                                         best_char_idx = clamped;
                                         best_slot_depth = slot.depth;
@@ -1843,15 +1872,21 @@ impl Model for EditorData {
                             let dust_over_overlay = has_overlay && dust_present < 0.02;
 
                             // PHASE 7: shimmer only on quantized frames
-                            let base_idx = if is_base && should_update {
-                                let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                                let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
-                                if life_roll < 0.002 {
-                                    let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
-                                    (base_raw as i32 + dir).clamp(1, 83) as usize
-                                } else {
-                                    base_raw as usize
-                                }
+                            // Braille chars (≥ BRAILLE_CHARSET_START) always pass through — ignore should_update gate.
+                            let base_idx = if is_base {
+                                let raw_idx = base_raw as usize;
+                                if raw_idx >= BRAILLE_CHARSET_START {
+                                    raw_idx // braille preserved regardless of should_update
+                                } else if should_update {
+                                    let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                                    let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
+                                    if life_roll < 0.002 {
+                                        let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
+                                        (raw_idx as i32 + dir).clamp(1, 83) as usize
+                                    } else {
+                                        raw_idx
+                                    }
+                                } else { 0 }
                             } else { 0 };
 
                             // ── Compositing: bg → overlay → base ──
@@ -2246,6 +2281,11 @@ impl Model for EditorData {
                             frame_buffer.pixels[idx + 1] = to_u8(g);
                             frame_buffer.pixels[idx + 2] = to_u8(b);
                             frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
+                            // Braille chars from art images must survive effect overrides.
+                            // Bloom/corruption may have replaced the index — restore it.
+                            if density_idx >= BRAILLE_CHARSET_START {
+                                final_density_idx = density_idx;
+                            }
                             frame_buffer.char_indices[idx / 4] = final_density_idx as u16;
                         }
                     }
@@ -2283,7 +2323,8 @@ impl Model for EditorData {
                                     frame_buffer.pixels[idx + 1] = to_u8(eg);
                                     frame_buffer.pixels[idx + 2] = to_u8(eb);
                                     frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
-                                    frame_buffer.char_indices[idx / 4] = raw.min(20); // ghost chars (sparse only)
+                                    // Ghost chars: cap at 20 for ASCII, but preserve braille indices exactly
+                                    frame_buffer.char_indices[idx / 4] = if raw as usize >= BRAILLE_CHARSET_START { raw } else { raw.min(20) };
                                 }
                             }
                         }

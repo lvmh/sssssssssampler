@@ -95,6 +95,8 @@ pub struct AsciiImageDisplay {
     dropdown: RefCell<Option<DropdownKind>>,
     // V6: menu glitch transition (0.0 = hidden, 1.0 = fully visible)
     menu_reveal_t: RefCell<f32>,
+    // Loader: counts up from 0; loader shows while < LOADER_FRAMES
+    loader_frame: RefCell<u32>,
 // "more" toggle: collapsed by default, click to expand sound+visual sections
     more_expanded: RefCell<bool>,
 }
@@ -120,6 +122,7 @@ impl AsciiImageDisplay {
             frame_count: RefCell::new(0),
             dropdown: RefCell::new(None),
             menu_reveal_t: RefCell::new(0.0),
+            loader_frame: RefCell::new(0),
             more_expanded: RefCell::new(false),
         }
         .build(cx, |_cx| {})
@@ -259,11 +262,13 @@ impl AsciiImageDisplay {
         }
     }
 
-    /// Helper: render a single row of text
+    /// Helper: render a single row of text, with glitch substitution during menu reveal/hide.
+    /// Glitch chars are built into a single string — one fill_text() call regardless of transition.
     fn draw_row(&self, canvas: &mut Canvas, fid: vg::FontId, text: &str,
                  grid_row: usize, color: vg::Color, font_size: f32,
                  cell_w: f32, cell_h: f32, offset_x: f32, offset_y: f32, wave: f32) {
-        if *self.menu_reveal_t.borrow() < 0.5 { return; }
+        let reveal_t = *self.menu_reveal_t.borrow();
+        if reveal_t < 0.01 { return; }
         let mut paint = vg::Paint::color(color);
         paint.set_font(&[fid]);
         paint.set_font_size(font_size);
@@ -271,7 +276,27 @@ impl AsciiImageDisplay {
         paint.set_text_baseline(vg::Baseline::Top);
         let x = offset_x + UI_COL as f32 * cell_w;
         let y = offset_y + grid_row as f32 * cell_h + wave;
-        let _ = canvas.fill_text(x, y, text, &paint);
+        if reveal_t < 0.99 {
+            // During transition: substitute random chars proportional to (1 - reveal_t).
+            // Built as one string → single fill_text() call, no per-char overhead.
+            let frame = *self.frame_count.borrow();
+            let glitch_prob = 1.0 - reveal_t;
+            const GLITCH_CHARS: &[char] = &[
+                '#', '%', '$', '@', '&', '*', '+', '=', '/', '\\', '|', '<', '>', '~',
+                '─', '│', '┼', '░', '▒',
+            ];
+            let seed = (frame as u32).wrapping_mul(2654435761)
+                .wrapping_add(grid_row as u32 * 48271);
+            let glitched: String = text.chars().enumerate().map(|(ci, ch)| {
+                let h = seed.wrapping_add(ci as u32 * 1664525);
+                if ((h >> 8) & 0xFF) as f32 / 255.0 < glitch_prob {
+                    GLITCH_CHARS[((h >> 16) as usize) % GLITCH_CHARS.len()]
+                } else { ch }
+            }).collect();
+            let _ = canvas.fill_text(x, y, &glitched, &paint);
+        } else {
+            let _ = canvas.fill_text(x, y, text, &paint);
+        }
     }
 
     /// Render UI overlay
@@ -548,6 +573,10 @@ impl View for AsciiImageDisplay {
             let in_zone = mx < bounds.w * 0.5 && my < bounds.h * 0.5;
             let dragging = self.drag.borrow().is_some();
             let dd_open = self.dropdown.borrow().is_some();
+            // Auto-close "more" when mouse leaves and nothing is holding the menu open
+            if !in_zone && !dragging && !dd_open {
+                *self.more_expanded.borrow_mut() = false;
+            }
             let more_open = *self.more_expanded.borrow();
             *self.menu_visible.borrow_mut() = in_zone || dragging || dd_open || more_open;
         }
@@ -557,6 +586,82 @@ impl View for AsciiImageDisplay {
             *fc += 1;
             *fc
         };
+        // ── Loader ────────────────────────────────────────────────────────────
+        // Three pulsing dots in the top-left corner while the GPU atlas warms up.
+        // Pure path rendering — no fill_text, no font dependency.
+        const LOADER_FRAMES: u32 = 50;
+        const LOADER_FADE: u32 = 8;
+        {
+            let mut lf = self.loader_frame.borrow_mut();
+            if *lf <= LOADER_FRAMES + LOADER_FADE { *lf += 1; }
+        }
+        let lf = *self.loader_frame.borrow();
+
+        if lf < LOADER_FRAMES + LOADER_FADE {
+            let alpha = if lf < LOADER_FRAMES { 1.0f32 }
+                        else { 1.0 - (lf - LOADER_FRAMES) as f32 / LOADER_FADE as f32 };
+
+            // Replicate cell layout to place dots exactly where the title will appear
+            let rows = GRID_ROWS as f32;
+            let cols = GRID_COLS as f32;
+            let cell_h_fh = bounds.h / rows;
+            let cell_w_fh = cell_h_fh * MONO_ASPECT;
+            let cell_w_fw = bounds.w / cols;
+            let cell_h_fw = cell_w_fw / MONO_ASPECT;
+            let (cell_w, cell_h) = if cell_w_fh * cols <= bounds.w {
+                (cell_w_fh, cell_h_fh)
+            } else {
+                (cell_w_fw, cell_h_fw)
+            };
+            let total_h = cell_h * rows;
+            let offset_x = bounds.x;
+            let offset_y = bounds.y + (bounds.h - total_h) * 0.5;
+            let title_x = offset_x + UI_COL as f32 * cell_w;
+            let title_y = offset_y + 1.0 * cell_h;
+
+            // Theme color from FrameBuffer if available, else warm gray fallback
+            let (pr, pg, pb, br, bg_c, bb) = if let Ok(lock) = self.frame_buffer.lock() {
+                if let Some(fb) = lock.as_ref() {
+                    let [r, g, b] = fb.primary_rgb;
+                    let [bgr, bgg, bgb] = fb.bg_rgb;
+                    (r, g, b, bgr, bgg, bgb)
+                } else { (180, 180, 180, 14, 14, 20) }
+            } else { (180, 180, 180, 14, 14, 20) };
+
+            // Background fill only behind the dots row (thin strip matching title area)
+            let strip_h = cell_h * 1.6;
+            let mut bg_path = vg::Path::new();
+            bg_path.rect(bounds.x, title_y - cell_h * 0.3, bounds.w, strip_h);
+            canvas.fill_path(&mut bg_path, &vg::Paint::color(vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8)));
+
+            // Three dots, horizontally spaced like the title text chars
+            let spacing = cell_w * 1.2;
+            for i in 0u32..3 {
+                let phase = lf as f32 * 0.22 + i as f32 * 0.8;
+                let pulse = (phase.sin() * 0.5 + 0.5) * 0.75 + 0.25;
+                let r = (pr as f32 * pulse * alpha) as u8;
+                let g = (pg as f32 * pulse * alpha) as u8;
+                let b = (pb as f32 * pulse * alpha) as u8;
+                let mut p = vg::Path::new();
+                p.circle(title_x + i as f32 * spacing + cell_w * 0.5, title_y + cell_h * 0.5, (cell_h * 0.18).max(1.5));
+                canvas.fill_path(&mut p, &vg::Paint::color(vg::Color::rgba(r, g, b, 255)));
+            }
+
+            // Pre-warm glyph atlas invisibly near end of loader (so first real frame is instant)
+            if lf == LOADER_FRAMES.saturating_sub(5) {
+                if let Some(fid) = self.ensure_font(canvas) {
+                    let warmup = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !@#$%&*()[]{}<>|/\\,.;:'\"~-_=+`^";
+                    let mut wp = vg::Paint::color(vg::Color::rgba(0, 0, 0, 0));
+                    wp.set_font(&[fid]);
+                    wp.set_font_size(14.0);
+                    let _ = canvas.fill_text(-9999.0, -9999.0, warmup, &wp);
+                }
+            }
+
+            if lf < LOADER_FRAMES { return; }
+            // lf in [LOADER_FRAMES, LOADER_FRAMES+LOADER_FADE): fall through to draw real frame underneath
+        }
+
         let font = self.ensure_font(canvas);
 
         // Title always fully revealed (no typewriter — avoids startup stutter)
@@ -769,8 +874,19 @@ impl View for AsciiImageDisplay {
 
                     // ── Normal click handling (menu visible) ──
                     if let Some((col, row)) = self.pixel_to_cell(mx, my) {
-                        // ── Normal click handling ──
-                        if col < UI_COL || col >= UI_COL + UI_WIDTH { return; }
+                        // Click outside UI column → dual-axis drag, same as menu-hidden behavior
+                        if col < UI_COL || col >= UI_COL + UI_WIDTH {
+                            *self.drag.borrow_mut() = Some(DragState {
+                                row: UiRow::SampleRate,
+                                col_row: Some(UiRow::Filter),
+                                start_x: mx, start_y: my,
+                                start_value: self.get_param_value(UiRow::SampleRate),
+                                start_value2: self.get_param_value(UiRow::Filter),
+                            });
+                            cx.capture();
+                            cx.lock_cursor_icon();
+                            return;
+                        }
 
                         let more_open = *self.more_expanded.borrow();
                         if let Some(ui_row) = UiRow::from_grid_row(row, col, menu_vis, more_open) {

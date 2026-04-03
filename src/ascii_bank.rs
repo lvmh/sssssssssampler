@@ -94,10 +94,14 @@ pub const CHARSET: &[char] = &[
 ];
 
 pub const CHARSET_LEN: usize = CHARSET.len(); // 390 (134 ASCII/block/box + 256 braille)
-/// Number of non-braille entries (ASCII + block elements + box drawing).
-/// Use this for effect ranges (bloom, corruption, brightness) — braille chars
-/// live above this index and should not be randomly selected by effects.
-pub const ASCII_CHARSET_LEN: usize = 134;
+/// Number of entries safe for random selection by effects (ASCII + block elements only).
+/// Box-drawing chars (116–133) render as visible structural lines and look bad as glitch chars.
+/// Braille (134–389) should never be randomly selected by effects.
+/// Effects using ranges like `94..ASCII_CHARSET_LEN` get block elements only (94–115).
+pub const ASCII_CHARSET_LEN: usize = 116;
+/// First braille character index in CHARSET (U+2800). Chars at or above this index come from
+/// braille art images and must not be overwritten by character-substitution effects.
+pub const BRAILLE_CHARSET_START: usize = 134;
 
 /// Map any char to its nearest index in CHARSET.
 /// Called at parse time only.
