@@ -1871,28 +1871,26 @@ impl Model for EditorData {
 
                             let dust_over_overlay = has_overlay && dust_present < 0.02;
 
-                            // PHASE 7: shimmer on quantized frames — braille gets single-bit-flip shimmer
+                            // PHASE 7: shimmer on quantized frames — braille follows same gate as ASCII
                             let base_idx = if is_base {
                                 let raw_idx = base_raw as usize;
-                                if raw_idx >= BRAILLE_CHARSET_START {
-                                    if should_update {
-                                        let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                                        let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
+                                if should_update {
+                                    let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
+                                    let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
+                                    if raw_idx >= BRAILLE_CHARSET_START {
                                         if life_roll < 0.002 {
-                                            // Flip one random dot bit — braille equivalent of ASCII ±1 shimmer
+                                            // Single-bit flip — braille equivalent of ASCII ±1 shimmer
                                             let bit = 1usize << (life_seed as usize & 7);
                                             let code = (raw_idx - BRAILLE_CHARSET_START) ^ bit;
                                             BRAILLE_CHARSET_START + (code & 0xFF)
                                         } else { raw_idx }
-                                    } else { raw_idx } // held frame: keep braille art visible (image-like)
-                                } else if should_update {
-                                    let life_seed = noise_seed.wrapping_mul(1103515245).wrapping_add(12345);
-                                    let life_roll = ((life_seed >> 16) & 0xFFFF) as f32 / 65535.0;
-                                    if life_roll < 0.002 {
-                                        let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
-                                        (raw_idx as i32 + dir).clamp(1, 83) as usize
-                                    } else { raw_idx }
-                                } else { 0 }
+                                    } else {
+                                        if life_roll < 0.002 {
+                                            let dir = if (life_seed & 1) == 0 { 1i32 } else { -1 };
+                                            (raw_idx as i32 + dir).clamp(1, 83) as usize
+                                        } else { raw_idx }
+                                    }
+                                } else { 0 } // held frame: both ASCII and braille go dark
                             } else { 0 };
 
                             // ── Compositing: bg → overlay → base ──
@@ -1938,7 +1936,14 @@ impl Model for EditorData {
                                 if is_base {
                                     let c2 = palette.primary;
                                     // PHASE 3: structural_alpha dims cells organically at low filter
-                                    let ba = base_alpha * structural_alpha * (0.85 + ((base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)) * 0.15);
+                                    // Braille density = dot count (0–8 bits) / 8; ASCII = char index / max
+                                    let raw_ui = base_raw as usize;
+                                    let density_f = if raw_ui >= BRAILLE_CHARSET_START {
+                                        (raw_ui - BRAILLE_CHARSET_START).count_ones() as f32 / 8.0
+                                    } else {
+                                        (base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)
+                                    };
+                                    let ba = base_alpha * structural_alpha * (0.85 + density_f * 0.15);
                                     r = r + (c2.r - r) * ba;
                                     g = g + (c2.g - g) * ba;
                                     b = b + (c2.b - b) * ba;
@@ -1947,7 +1952,13 @@ impl Model for EditorData {
                             } else if is_base {
                                 let c = palette.primary;
                                 // PHASE 3: structural_alpha for organic fragmentation at low filter
-                                let alpha = base_alpha * structural_alpha * (0.85 + ((base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)) * 0.15);
+                                let raw_ui = base_raw as usize;
+                                let density_f = if raw_ui >= BRAILLE_CHARSET_START {
+                                    (raw_ui - BRAILLE_CHARSET_START).count_ones() as f32 / 8.0
+                                } else {
+                                    (base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)
+                                };
+                                let alpha = base_alpha * structural_alpha * (0.85 + density_f * 0.15);
                                 r = bg.r + (c.r - bg.r) * alpha;
                                 g = bg.g + (c.g - bg.g) * alpha;
                                 b = bg.b + (c.b - bg.b) * alpha;
