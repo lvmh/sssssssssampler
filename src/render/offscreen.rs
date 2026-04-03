@@ -4,12 +4,17 @@ pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<u8>, // RGBA format, width × height × 4 bytes
+    /// Character index (into CHARSET) per grid cell — parallel to pixels at grid resolution.
+    /// Stored separately because CHARSET can exceed 255 entries (braille support).
+    pub char_indices: Vec<u16>,
     /// Theme background color in sRGB [R, G, B] for canvas fill
     pub bg_rgb: [u8; 3],
-    /// Theme primary (pop) color in sRGB for UI title
+    /// Theme primary (pop) color in sRGB for ASCII glyphs
     pub primary_rgb: [u8; 3],
     /// Theme emphasis color in sRGB for UI text
     pub emphasis_rgb: [u8; 3],
+    /// Theme chart[0] color in sRGB for UI title (most vibrant accent)
+    pub title_rgb: [u8; 3],
     /// Current preset index (for UI display)
     pub preset_idx: u8,
     /// Current theme index (for UI display)
@@ -37,9 +42,11 @@ impl FrameBuffer {
             width,
             height,
             pixels: vec![0u8; (width * height * 4) as usize],
+            char_indices: vec![0u16; (width * height) as usize],
             bg_rgb: [0, 0, 0],
             primary_rgb: [200, 200, 200],
             emphasis_rgb: [180, 180, 180],
+            title_rgb: [200, 200, 200],
             preset_idx: 2,
             theme_idx: 1,
             energy: 0.0,

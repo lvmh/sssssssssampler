@@ -1,0 +1,43 @@
+name: Deploy release site
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update site with release info
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
+          sed -i "s|v<span>[^<]*</span>|v<span>${VERSION}</span>|g" site/index.html
+
+          # Update each download URL
+          sed -i "s|/releases/download/[^/]*/sssssssssampler-macOS\.zip|/releases/download/${TAG}/sssssssssampler-macOS.zip|g" site/index.html
+          sed -i "s|/releases/download/[^/]*/sssssssssampler-macOS-Intel\.zip|/releases/download/${TAG}/sssssssssampler-macOS-Intel.zip|g" site/index.html
+          sed -i "s|/releases/download/[^/]*/sssssssssampler-Windows\.zip|/releases/download/${TAG}/sssssssssampler-Windows.zip|g" site/index.html
+          sed -i "s|/releases/download/[^/]*/sssssssssampler-Linux\.zip|/releases/download/${TAG}/sssssssssampler-Linux.zip|g" site/index.html
+
+          # Update displayed filenames
+          sed -i "s|sssssssssampler-macOS\.zip|sssssssssampler-macOS.zip|g" site/index.html
+          sed -i "s|sssssssssampler-macOS-Intel\.zip|sssssssssampler-macOS-Intel.zip|g" site/index.html
+          sed -i "s|sssssssssampler-Windows\.zip|sssssssssampler-Windows.zip|g" site/index.html
+          sed -i "s|sssssssssampler-Linux\.zip|sssssssssampler-Linux.zip|g" site/index.html
+
+      - name: Deploy to Vercel
+        working-directory: site
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npm i -g vercel@latest
+          vercel --prod --token "$VERCEL_TOKEN" --yes

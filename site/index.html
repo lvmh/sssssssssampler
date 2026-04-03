@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sssssssssampler</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:       #1f1f28;
+      --bg2:      #2a2a37;
+      --fg:       #dcd7ba;
+      --fg-dim:   #727169;
+      --blue:     #7e9cd8;
+      --green:    #98bb6c;
+      --red:      #e46876;
+      --orange:   #ffa066;
+      --purple:   #957fb8;
+      --yellow:   #c0a36e;
+      --border:   #363646;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Fira Code', monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    main {
+      width: 100%;
+      max-width: 540px;
+    }
+
+    .title {
+      font-size: clamp(1.1rem, 4vw, 1.4rem);
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+      margin-bottom: 0.25rem;
+    }
+
+    .version {
+      font-size: 0.8rem;
+      color: var(--fg-dim);
+      margin-bottom: 2.5rem;
+    }
+
+    .version span {
+      color: var(--green);
+    }
+
+    .links {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    a {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0;
+      color: var(--fg);
+      text-decoration: none;
+      font-size: 0.85rem;
+      transition: opacity 0.15s;
+    }
+
+    a:hover {
+      opacity: 0.7;
+    }
+
+    .icon {
+      font-size: 0.75rem;
+      width: 1.4rem;
+      text-align: center;
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
+
+    .label { flex: 1; }
+    .label small { color: var(--fg-dim); font-size: 0.75rem; display: block; margin-top: 0.1rem; }
+
+    .size {
+      color: var(--fg-dim);
+      font-size: 0.72rem;
+    }
+
+    .divider {
+      border: none;
+      margin: 0.25rem 0;
+    }
+
+    footer {
+      margin-top: 2.5rem;
+      font-size: 0.72rem;
+      color: var(--fg-dim);
+    }
+
+    footer a {
+      display: inline;
+      padding: 0;
+      color: var(--blue);
+      font-size: inherit;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="title">sssssssssampler</div>
+    <div class="version">v<span>0.2.6</span> &mdash; VST3 + CLAP</div>
+
+    <div class="links">
+
+      <a class="mac" href="https://github.com/lvmh/sssssssssampler/releases/download/v0.2.6/sssssssssampler-macOS.zip">
+        <span class="icon">↓</span>
+        <span class="label">
+          macOS (Apple Silicon)
+          <small>sssssssssampler-macOS.zip</small>
+        </span>
+        <span class="size">6.3 MB</span>
+      </a>
+
+      <a class="intel" href="https://github.com/lvmh/sssssssssampler/releases/download/v0.2.6/sssssssssampler-macOS-Intel.zip">
+        <span class="icon">↓</span>
+        <span class="label">
+          macOS (Intel)
+          <small>sssssssssampler-macOS-Intel.zip</small>
+        </span>
+        <span class="size">6.6 MB</span>
+      </a>
+
+      <hr class="divider">
+
+      <a class="win" href="https://github.com/lvmh/sssssssssampler/releases/download/v0.2.6/sssssssssampler-Windows.zip">
+        <span class="icon">↓</span>
+        <span class="label">
+          Windows
+          <small>sssssssssampler-Windows.zip</small>
+        </span>
+        <span class="size">6.4 MB</span>
+      </a>
+
+      <a class="linux" href="https://github.com/lvmh/sssssssssampler/releases/download/v0.2.6/sssssssssampler-Linux.zip">
+        <span class="icon">↓</span>
+        <span class="label">
+          Linux
+          <small>sssssssssampler-Linux.zip</small>
+        </span>
+        <span class="size">6.9 MB</span>
+      </a>
+
+      <hr class="divider">
+
+      <a class="source" href="https://github.com/lvmh/sssssssssampler">
+        <span class="icon">→</span>
+        <span class="label">Source</span>
+      </a>
+
+    </div>
+
+    <footer>
+      SP-1200 &middot; MPC60 &middot; S950 &middot; Mirage &middot; P-2000 &middot; MPC3000 &middot; SP-303
+    </footer>
+  </main>
+</body>
+</html>

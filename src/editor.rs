@@ -573,9 +573,11 @@ impl Model for EditorData {
             }
             EditorEvent::CycleTheme => {
                 self.theme_id = (self.theme_id + 1) % THEME_COUNT;
+                self.params.theme_id.store(self.theme_id as u8, std::sync::atomic::Ordering::Relaxed);
             }
             EditorEvent::ToggleMode => {
                 self.dark_mode = !self.dark_mode;
+                self.params.dark_mode_persisted.store(self.dark_mode as u8, std::sync::atomic::Ordering::Relaxed);
             }
             EditorEvent::CycleFeel => {
                 let idx = FEELS.iter().position(|f| *f == self.feel).unwrap_or(1);
@@ -602,6 +604,7 @@ impl Model for EditorData {
             EditorEvent::SelectTheme(idx) => {
                 if *idx < THEME_COUNT {
                     self.theme_id = *idx;
+                    self.params.theme_id.store(*idx as u8, std::sync::atomic::Ordering::Relaxed);
                 }
             }
             EditorEvent::Tick => {
@@ -760,6 +763,11 @@ impl Model for EditorData {
                         to_u8_fn(palette.emphasis.r),
                         to_u8_fn(palette.emphasis.g),
                         to_u8_fn(palette.emphasis.b),
+                    ];
+                    frame_buffer.title_rgb = [
+                        to_u8_fn(palette.chart[0].r),
+                        to_u8_fn(palette.chart[0].g),
+                        to_u8_fn(palette.chart[0].b),
                     ];
                     frame_buffer.preset_idx = self.preset_idx as u8;
                     frame_buffer.theme_idx = self.theme_id as u8;
@@ -1025,7 +1033,6 @@ impl Model for EditorData {
                         col_shift: i32,
                         img_row_offset: i32,
                         img_col_offset: i32,
-                        color_idx: usize,
                         depth: u8, // V6: 0=front(Pulse), 1=Accent, 2=Drift, 3=Ghost(back)
                     }
 
@@ -1113,27 +1120,26 @@ impl Model for EditorData {
                         let sin_val = ((t + phase_offset) / slot_period * std::f32::consts::TAU).sin();
 
                         // V4: Role-based alpha
-                        let filter_boost = 1.0 - filter_val * 0.5;
                         let raw_alpha = match i {
                             0 => {
                                 // Pulse: beat-synced square wave
                                 let beat_phase = (t / ticks_per_beat) % 1.0;
-                                let pulse = if beat_phase < 0.5 { 0.8 } else { 0.3 };
-                                pulse * overlay_visibility * filter_boost * phrase_overlay_mod
+                                let pulse = if beat_phase < 0.5 { 0.8 } else { 0.45 };
+                                pulse * overlay_visibility
                             }
                             1 => {
-                                // Accent: transient-reactive
-                                (accent_alpha * overlay_visibility * filter_boost).min(1.0)
+                                // Accent: ~80% of Pulse peak
+                                (accent_alpha * overlay_visibility).min(0.85)
                             }
                             2 => {
-                                // Drift: slow ambient sine
-                                let drift_alpha = (sin_val * 0.5 + 0.5) * 0.5;
-                                drift_alpha * overlay_visibility * filter_boost * phrase_overlay_mod
+                                // Drift
+                                let drift_alpha = (sin_val * 0.5 + 0.5) * 0.72;
+                                drift_alpha * overlay_visibility
                             }
                             3 => {
-                                // Ghost: afterimage-driven
-                                let ghost_alpha = afterimage_val * 0.7;
-                                ghost_alpha.max(0.15) * overlay_visibility * filter_boost
+                                // Ghost
+                                let ghost_alpha = afterimage_val * 0.59;
+                                ghost_alpha.max(0.07) * overlay_visibility
                             }
                             _ => 0.0,
                         };
@@ -1181,7 +1187,6 @@ impl Model for EditorData {
                             col_shift,
                             img_row_offset,
                             img_col_offset,
-                            color_idx: i % 4,
                             depth: i as u8,
                         }
                     });
@@ -1547,7 +1552,7 @@ impl Model for EditorData {
                             // ── Overlay (full-screen, no margin restriction) ──
                             let mut best_alpha = 0.0f32;
                             let mut best_char_idx = 0usize;
-                            let mut best_color_idx = 0usize;
+                            let mut best_slot_depth = 0u8;
                             {
                                 for (si, slot) in slots.iter().enumerate() {
                                     if slot.alpha < 0.01 { continue; }
@@ -1600,19 +1605,17 @@ impl Model for EditorData {
                                     let ov_chance = ((ov_hash >> 16) & 0xFF) as f32 / 255.0;
                                     if ov_chance > overlay_density_threshold * phrase_overlay_mod { continue; }
 
-                                    // V6: depth-of-field alpha reduction for Ghost
-                                    let depth_alpha = if slot.depth == 3 { slot.alpha * 0.7 } else { slot.alpha };
-                                    if depth_alpha > best_alpha {
-                                        best_alpha = depth_alpha;
-                                        // V6: depth-of-field glyph restriction
+                                    if slot.alpha > best_alpha {
+                                        best_alpha = slot.alpha;
+                                        // Depth-of-field glyph restriction
                                         let clamped = match slot.depth {
                                             0 => raw as usize,                         // Pulse: full charset
-                                            1 => (raw as usize).min(90),               // Accent: no heavy blocks
-                                            2 => (raw as usize).min(60),               // Drift: medium chars
-                                            _ => (raw as usize).min(20),               // Ghost: light chars only
+                                            1 => (raw as usize).min(100),              // Accent: up to ▓ stipple
+                                            2 => (raw as usize).min(90),               // Drift: up to ½-blocks
+                                            _ => (raw as usize).min(55),               // Ghost: medium-weight ASCII
                                         };
                                         best_char_idx = clamped;
-                                        best_color_idx = slot.color_idx;
+                                        best_slot_depth = slot.depth;
                                     }
                                 }
                             }
@@ -1676,18 +1679,20 @@ impl Model for EditorData {
                             } else { 1.0 };
 
                             if has_overlay && !dust_over_overlay {
-                                // V2: color temporal drift on overlays
-                                let ci = best_color_idx;
-                                let c = palette.secondary[ci];
+                                // Per-depth vibrant chart color with subtle temporal drift to adjacent chart slot
+                                let ci = best_slot_depth as usize;
+                                let c = palette.chart[ci];
                                 let drift_ci = (ci + 1) % 4;
-                                let c_drift = palette.secondary[drift_ci];
+                                let c_drift = palette.chart[drift_ci];
                                 let cd = color_drift.abs();
                                 let cr = c.r + (c_drift.r - c.r) * cd;
                                 let cg = c.g + (c_drift.g - c.g) * cd;
                                 let cb = c.b + (c_drift.b - c.b) * cd;
 
                                 // V3: filter + structural alpha applies to overlays too
-                                let ov_alpha = best_alpha * 0.80 * overlay_visibility * base_alpha * overlay_structural;
+                                // Light mode: colored glyphs need stronger pull to register on near-white bg
+                                let light_boost = if is_light { 1.55 } else { 1.0 };
+                                let ov_alpha = (best_alpha * 0.97 * overlay_structural * light_boost).min(0.95);
                                 r = bg.r + (cr - bg.r) * ov_alpha;
                                 g = bg.g + (cg - bg.g) * ov_alpha;
                                 b = bg.b + (cb - bg.b) * ov_alpha;
@@ -1925,7 +1930,8 @@ impl Model for EditorData {
                             frame_buffer.pixels[idx]     = to_u8(r);
                             frame_buffer.pixels[idx + 1] = to_u8(g);
                             frame_buffer.pixels[idx + 2] = to_u8(b);
-                            frame_buffer.pixels[idx + 3] = final_density_idx as u8;
+                            frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
+                            frame_buffer.char_indices[idx / 4] = final_density_idx as u16;
                         }
                     }
 
@@ -1943,7 +1949,7 @@ impl Model for EditorData {
                                 for col in 0..COLS {
                                     let idx = ((row * COLS + col) * 4) as usize;
                                     // Only render echo on cells that are currently background
-                                    if frame_buffer.pixels[idx + 3] > 0 { continue; }
+                                    if frame_buffer.pixels[idx + 3] > 0 { continue; } // skip written cells
                                     let ru = row as usize;
                                     let cu = col as usize;
                                     let echo_base_col = cu as i32 + echo_col_drift - core_col_off;
@@ -1961,8 +1967,8 @@ impl Model for EditorData {
                                     frame_buffer.pixels[idx]     = to_u8(er);
                                     frame_buffer.pixels[idx + 1] = to_u8(eg);
                                     frame_buffer.pixels[idx + 2] = to_u8(eb);
-                                    // Keep density_idx at 0 (echo is just color, no glyph)
-                                    frame_buffer.pixels[idx + 3] = (raw as usize).min(20) as u8; // ghost chars
+                                    frame_buffer.pixels[idx + 3] = 255; // sentinel: cell written
+                                    frame_buffer.char_indices[idx / 4] = raw.min(20); // ghost chars (sparse only)
                                 }
                             }
                         }
@@ -2046,8 +2052,8 @@ pub(crate) fn create(
 
             EditorData {
                 params: params.clone(),
-                theme_id: 4, // Paris dark
-                dark_mode: true,
+                theme_id: params.theme_id.load(std::sync::atomic::Ordering::Relaxed) as usize,
+                dark_mode: params.dark_mode_persisted.load(std::sync::atomic::Ordering::Relaxed) != 0,
                 preset_idx: DEFAULT_PRESET,
                 frame_update_counter: 0,
                 gui_ctx: gui_ctx.clone(),

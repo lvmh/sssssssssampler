@@ -71,18 +71,36 @@ pub const CHARSET: &[char] = &[
     '╚', // 121
     '╝', // 122
     '╬', // 123 — double cross (densest box drawing)
+    // ── Braille patterns U+2800–U+28FF (all 256), in Unicode order ──
+    // Index 124 = U+2800 (⠀ blank braille), index 379 = U+28FF (⣿ full braille)
+    '⠀','⠁','⠂','⠃','⠄','⠅','⠆','⠇','⠈','⠉','⠊','⠋','⠌','⠍','⠎','⠏',
+    '⠐','⠑','⠒','⠓','⠔','⠕','⠖','⠗','⠘','⠙','⠚','⠛','⠜','⠝','⠞','⠟',
+    '⠠','⠡','⠢','⠣','⠤','⠥','⠦','⠧','⠨','⠩','⠪','⠫','⠬','⠭','⠮','⠯',
+    '⠰','⠱','⠲','⠳','⠴','⠵','⠶','⠷','⠸','⠹','⠺','⠻','⠼','⠽','⠾','⠿',
+    '⡀','⡁','⡂','⡃','⡄','⡅','⡆','⡇','⡈','⡉','⡊','⡋','⡌','⡍','⡎','⡏',
+    '⡐','⡑','⡒','⡓','⡔','⡕','⡖','⡗','⡘','⡙','⡚','⡛','⡜','⡝','⡞','⡟',
+    '⡠','⡡','⡢','⡣','⡤','⡥','⡦','⡧','⡨','⡩','⡪','⡫','⡬','⡭','⡮','⡯',
+    '⡰','⡱','⡲','⡳','⡴','⡵','⡶','⡷','⡸','⡹','⡺','⡻','⡼','⡽','⡾','⡿',
+    '⢀','⢁','⢂','⢃','⢄','⢅','⢆','⢇','⢈','⢉','⢊','⢋','⢌','⢍','⢎','⢏',
+    '⢐','⢑','⢒','⢓','⢔','⢕','⢖','⢗','⢘','⢙','⢚','⢛','⢜','⢝','⢞','⢟',
+    '⢠','⢡','⢢','⢣','⢤','⢥','⢦','⢧','⢨','⢩','⢪','⢫','⢬','⢭','⢮','⢯',
+    '⢰','⢱','⢲','⢳','⢴','⢵','⢶','⢷','⢸','⢹','⢺','⢻','⢼','⢽','⢾','⢿',
+    '⣀','⣁','⣂','⣃','⣄','⣅','⣆','⣇','⣈','⣉','⣊','⣋','⣌','⣍','⣎','⣏',
+    '⣐','⣑','⣒','⣓','⣔','⣕','⣖','⣗','⣘','⣙','⣚','⣛','⣜','⣝','⣞','⣟',
+    '⣠','⣡','⣢','⣣','⣤','⣥','⣦','⣧','⣨','⣩','⣪','⣫','⣬','⣭','⣮','⣯',
+    '⣰','⣱','⣲','⣳','⣴','⣵','⣶','⣷','⣸','⣹','⣺','⣻','⣼','⣽','⣾','⣿',
 ];
 
-pub const CHARSET_LEN: usize = CHARSET.len(); // 124
+pub const CHARSET_LEN: usize = CHARSET.len(); // 380 (124 ASCII/block/box + 256 braille)
 
 /// Map any char to its nearest index in CHARSET.
 /// Called at parse time only.
 /// IMPORTANT: Exact ASCII matches always win — artwork characters are preserved.
-pub fn char_to_idx(c: char) -> u8 {
+pub fn char_to_idx(c: char) -> u16 {
     // Fast path: exact match (preserves all original artwork characters)
     for (i, &ch) in CHARSET.iter().enumerate() {
         if ch == c {
-            return i as u8;
+            return i as u16;
         }
     }
     // Not in CHARSET — treat as empty space. Don't try to approximate.
@@ -95,11 +113,11 @@ pub fn char_to_idx(c: char) -> u8 {
 pub struct AsciiGrid {
     pub width: usize,
     pub height: usize,
-    pub cells: Vec<u8>,
+    pub cells: Vec<u16>,
 }
 
 impl AsciiGrid {
-    pub fn get(&self, x: usize, y: usize) -> u8 {
+    pub fn get(&self, x: usize, y: usize) -> u16 {
         if x < self.width && y < self.height {
             self.cells[y * self.width + x]
         } else {
@@ -109,7 +127,7 @@ impl AsciiGrid {
 
     /// Resize to target_w × target_h by nearest-neighbour sampling.
     pub fn resized(&self, target_w: usize, target_h: usize) -> AsciiGrid {
-        let mut cells = vec![0u8; target_w * target_h];
+        let mut cells = vec![0u16; target_w * target_h];
         for ty in 0..target_h {
             for tx in 0..target_w {
                 let sx = (tx * self.width) / target_w;
@@ -219,7 +237,7 @@ impl AsciiBank {
         self.images.len()
     }
 
-    pub fn get_cell(&self, img_idx: usize, x: usize, y: usize) -> u8 {
+    pub fn get_cell(&self, img_idx: usize, x: usize, y: usize) -> u16 {
         if img_idx < self.images.len() {
             self.images[img_idx].grid.get(x, y)
         } else {
@@ -231,7 +249,7 @@ impl AsciiBank {
 fn parse_ascii_image(src: &str, _target_w: usize, _target_h: usize) -> AsciiGrid {
     // Store at native resolution — no resizing, no distortion.
     // Characters render exactly as they appear in the source file.
-    let lines: Vec<Vec<u8>> = src
+    let lines: Vec<Vec<u16>> = src
         .lines()
         .map(|line| {
             line.chars()
@@ -243,7 +261,7 @@ fn parse_ascii_image(src: &str, _target_w: usize, _target_h: usize) -> AsciiGrid
     let raw_h = lines.len().max(1);
     let raw_w = lines.iter().map(|l| l.len()).max().unwrap_or(1).max(1);
 
-    let mut raw_cells = vec![0u8; raw_w * raw_h];
+    let mut raw_cells = vec![0u16; raw_w * raw_h];
     for (y, line) in lines.iter().enumerate() {
         for (x, &v) in line.iter().enumerate() {
             raw_cells[y * raw_w + x] = v;

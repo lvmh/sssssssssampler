@@ -1,5 +1,6 @@
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
 mod editor;
@@ -27,7 +28,6 @@ struct Sssssssssampler {
     quant_error: [f32; 2],   // noise-shaping error per channel
     prev_dac: [f32; 2],      // DAC output stage previous sample
     pre_filter: FilterState, // bandwidth/AA pre-filter (pole count matches machine)
-    pink_state: [f32; 2],    // one-pole pink noise filter state per channel
     dc_x: [f32; 2],          // DC blocker: previous input sample
     dc_y: [f32; 2],          // DC blocker: previous output sample
     jitter_walk: [f32; 2],   // correlated (Brownian) clock jitter state per channel
@@ -49,7 +49,6 @@ impl Default for Sssssssssampler {
             quant_error: [0.0; 2],
             prev_dac: [0.0; 2],
             pre_filter: FilterState::new(),
-            pink_state: [0.0; 2],
             dc_x: [0.0; 2],
             dc_y: [0.0; 2],
             jitter_walk: [0.0; 2],
@@ -94,6 +93,14 @@ pub struct SssssssssamplerParams {
     /// When OFF: allows raw aliasing (lo-fi aesthetic)
     #[id = "anti_alias"]
     pub anti_alias: BoolParam,
+
+    /// Persisted theme index (0–13)
+    #[persist = "theme-id"]
+    pub theme_id: Arc<AtomicU8>,
+
+    /// Persisted dark mode flag (0 = light, 1 = dark)
+    #[persist = "dark-mode"]
+    pub dark_mode_persisted: Arc<AtomicU8>,
 }
 
 impl Default for SssssssssamplerParams {
@@ -191,6 +198,10 @@ impl Default for SssssssssamplerParams {
             .with_unit("-pole"),
 
             anti_alias: BoolParam::new("Anti-Aliasing", false),
+
+            // Kanagawa dark (theme 8, dark=1)
+            theme_id: Arc::new(AtomicU8::new(8)),
+            dark_mode_persisted: Arc::new(AtomicU8::new(1)),
         }
     }
 }
@@ -389,7 +400,6 @@ impl Plugin for Sssssssssampler {
         self.drift_phase = [0.0; 2];
         self.quant_error = [0.0; 2];
         self.prev_dac = [0.0; 2];
-        self.pink_state = [0.0; 2];
         self.dc_x = [0.0; 2];
         self.dc_y = [0.0; 2];
         self.jitter_walk = [0.0; 2];
@@ -503,14 +513,8 @@ impl Plugin for Sssssssssampler {
                 };
                 let adc_out = s - s * s * s * sat_cubic + s * s.abs() * sat_even;
 
-                // ── TPDF dither + bit crush ───────────────────────────
-                // Two rectangular noises summed = triangular distribution (TPDF).
-                // Dithers at ±1 LSB before quantisation — prevents harsh
-                // quantisation of quiet signals, smooth fade into noise floor.
-                let levels = (2.0_f32).powf(bit_depth_smooth - 1.0);
-                let dither = (lcg_rand(&mut self.rng_state) + lcg_rand(&mut self.rng_state))
-                    * (0.5 / levels);
-                let mut wet = crush_shaped(adc_out + dither, bit_depth_smooth, &mut self.quant_error[ch]);
+                // ── Bit crush ─────────────────────────────────────────
+                let mut wet = crush_shaped(adc_out, bit_depth_smooth, &mut self.quant_error[ch]);
 
                 // ── Reconstruction filter (machine character) ─────────
                 wet = self.filter.process(wet, ch, poles);
@@ -529,12 +533,6 @@ impl Plugin for Sssssssssampler {
                 self.dc_x[ch] = dc_in;
                 self.dc_y[ch] = wet;
 
-                // ── Pink noise floor (~-88 dBFS) ─────────────────────
-                // One-pole 1/f filter on white noise — warmer than raw white,
-                // matches the transformer + op-amp hiss of vintage hardware.
-                let white = lcg_rand(&mut self.rng_state);
-                self.pink_state[ch] = 0.99765 * self.pink_state[ch] + white * 0.0555179;
-                wet += self.pink_state[ch] * 0.000035;
 
                 // ── Dry/wet ───────────────────────────────────────────
                 let output = dry + (wet - dry) * mix;

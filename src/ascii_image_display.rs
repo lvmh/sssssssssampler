@@ -116,7 +116,7 @@ impl AsciiImageDisplay {
             frame_count: RefCell::new(0),
             dropdown: RefCell::new(None),
             menu_reveal_t: RefCell::new(0.0),
-            title_chars_revealed: RefCell::new(0),
+            title_chars_revealed: RefCell::new(15),
             more_expanded: RefCell::new(false),
         }
         .build(cx, |_cx| {})
@@ -317,7 +317,7 @@ impl AsciiImageDisplay {
         let t = frame as f32;
         let dropdown = *self.dropdown.borrow();
 
-        let [pr, pg, pb] = fb.primary_rgb;
+        let [pr, pg, pb] = fb.title_rgb;
         let [er, eg, eb] = fb.emphasis_rgb;
         let [br, bg_green, bb] = fb.bg_rgb;
 
@@ -596,13 +596,7 @@ impl View for AsciiImageDisplay {
         };
         let font = self.ensure_font(canvas);
 
-        // V6: Advance typewriter (reveal ~2 chars per frame, total 15 chars)
-        {
-            let mut revealed = self.title_chars_revealed.borrow_mut();
-            if *revealed < 15 && frame % 3 == 0 {
-                *revealed += 1;
-            }
-        }
+        // Title always fully revealed (no typewriter — avoids startup stutter)
 
         // V6: Smooth menu reveal transition (glitch in/out)
         {
@@ -651,11 +645,11 @@ impl View for AsciiImageDisplay {
                 for row in 0..rows {
                     for col in 0..cols {
                         let pix = (row * cols + col) * 4;
-                        if pix + 3 >= fb.pixels.len() { continue; }
+                        if pix + 3 >= fb.pixels.len() || pix / 4 >= fb.char_indices.len() { continue; }
                         let r = fb.pixels[pix];
                         let g = fb.pixels[pix + 1];
                         let b = fb.pixels[pix + 2];
-                        let char_idx = (fb.pixels[pix + 3] as usize).min(CHARSET_LEN - 1);
+                        let char_idx = (fb.char_indices[pix / 4] as usize).min(CHARSET_LEN - 1);
 
                         let x = offset_x + col as f32 * cell_w;
                         let y = offset_y + row as f32 * cell_h;

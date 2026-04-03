@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "sssssssssampler"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "SP-1200 / S950 style sample rate & bit depth reducer"
 
