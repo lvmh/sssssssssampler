@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::SssssssssamplerParams;
 use crate::AnimationParams;
 use crate::ascii_image_display::AsciiImageDisplay;
-use crate::ascii_bank::{AsciiBank, CHARSET_LEN};
+use crate::ascii_bank::{AsciiBank, ASCII_CHARSET_LEN};
 use crate::render::color_system::ColorPalette;
 use std::sync::Mutex;
 
@@ -1701,7 +1701,7 @@ impl Model for EditorData {
                                 if is_base {
                                     let c2 = palette.primary;
                                     // PHASE 3: structural_alpha dims cells organically at low filter
-                                    let ba = base_alpha * structural_alpha * (0.85 + (base_raw / (CHARSET_LEN - 1) as f32) * 0.15);
+                                    let ba = base_alpha * structural_alpha * (0.85 + ((base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)) * 0.15);
                                     r = r + (c2.r - r) * ba;
                                     g = g + (c2.g - g) * ba;
                                     b = b + (c2.b - b) * ba;
@@ -1710,7 +1710,7 @@ impl Model for EditorData {
                             } else if is_base {
                                 let c = palette.primary;
                                 // PHASE 3: structural_alpha for organic fragmentation at low filter
-                                let alpha = base_alpha * structural_alpha * (0.85 + (base_raw / (CHARSET_LEN - 1) as f32) * 0.15);
+                                let alpha = base_alpha * structural_alpha * (0.85 + ((base_raw / (ASCII_CHARSET_LEN - 1) as f32).min(1.0)) * 0.15);
                                 r = bg.r + (c.r - bg.r) * alpha;
                                 g = bg.g + (c.g - bg.g) * alpha;
                                 b = bg.b + (c.b - bg.b) * alpha;
@@ -1751,8 +1751,8 @@ impl Model for EditorData {
                                 if in_bloom {
                                     let bloom_seed = col.wrapping_mul(31337).wrapping_add(row.wrapping_mul(7919))
                                         .wrapping_add(self.moment.seed);
-                                    let gi = 87 + ((bloom_seed >> 4) as usize % (CHARSET_LEN - 87));
-                                    final_density_idx = gi.min(CHARSET_LEN - 1);
+                                    let gi = 87 + ((bloom_seed >> 4) as usize % (ASCII_CHARSET_LEN - 87));
+                                    final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                     // Random theme color per cell (primary + 4 secondaries)
                                     let color_pick = ((bloom_seed >> 8) % 5) as usize;
                                     let gc = if color_pick == 0 { palette.primary } else { palette.secondary[color_pick - 1] };
@@ -1788,21 +1788,21 @@ impl Model for EditorData {
                                         1 => (94, 12, 94, 12),                  // h-line: block elements only
                                         2 => (84, 30, 87, 37),                  // warped: wide range
                                         3 => (1, 10, 94, 6),                    // minimal: light chars + thin blocks
-                                        _ => (1, CHARSET_LEN - 1, 87, 22),      // mixed: full range
+                                        _ => (1, ASCII_CHARSET_LEN - 1, 87, 22), // mixed: full ASCII range
                                     };
                                     match corruption_tier {
                                         1 => {
                                             let gi = pt_base + ((glitch_seed >> 4) as usize % pt_range);
-                                            final_density_idx = gi.min(CHARSET_LEN - 1);
+                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                         }
                                         2 => {
                                             let gi = cl_base + ((glitch_seed >> 4) as usize % cl_range);
-                                            final_density_idx = gi.min(CHARSET_LEN - 1);
+                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                         }
                                         _ => {
                                             // Structural: always heavy blocks
-                                            let gi = 87 + ((glitch_seed >> 4) as usize % (CHARSET_LEN - 87));
-                                            final_density_idx = gi.min(CHARSET_LEN - 1);
+                                            let gi = 87 + ((glitch_seed >> 4) as usize % (ASCII_CHARSET_LEN - 87));
+                                            final_density_idx = gi.min(ASCII_CHARSET_LEN - 1);
                                         }
                                     }
                                     let gc = palette.emphasis;

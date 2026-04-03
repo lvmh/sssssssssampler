@@ -92,6 +92,10 @@ pub const CHARSET: &[char] = &[
 ];
 
 pub const CHARSET_LEN: usize = CHARSET.len(); // 380 (124 ASCII/block/box + 256 braille)
+/// Number of non-braille entries (ASCII + block elements + box drawing).
+/// Use this for effect ranges (bloom, corruption, brightness) — braille chars
+/// live above this index and should not be randomly selected by effects.
+pub const ASCII_CHARSET_LEN: usize = 124;
 
 /// Map any char to its nearest index in CHARSET.
 /// Called at parse time only.
