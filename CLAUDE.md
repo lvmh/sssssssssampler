@@ -39,14 +39,14 @@ cargo xtask bundle sssssssssampler --target x86_64-apple-darwin
 | File | Role |
 |------|------|
 | `lib.rs` | Plugin struct, all DSP, parameter definitions |
-| `editor.rs` | V5 animation engine — 46×36 ASCII grid, 9 integrated features |
+| `editor.rs` | V6 animation engine — 54×42 ASCII grid, 9 integrated features |
 | `ascii_image_display.rs` | femtovg rendering, UI overlay, mouse interaction |
-| `ascii_bank.rs` | Parses `ascii.txt` (38 images, `#N` separator format) |
+| `ascii_bank.rs` | Parses `ascii.txt` (100 images, `#N` separator format) |
 | `audio_feed.rs` | `AudioFeed` + `AnimationParams` — audio analysis bridge to UI |
 | `parameter_remapping.rs` | Perceptual nonlinear parameter mapping helpers |
 | `render/color_system.rs` | 14 color themes × light/dark modes |
 | `render/audio_analysis.rs` | RMS, transient detection |
-| `render/offscreen.rs` | `FrameBuffer` struct — 46×36 grid + metadata |
+| `render/offscreen.rs` | `FrameBuffer` struct — 54×42 grid + metadata |
 
 ### DSP pipeline (`lib.rs`)
 
@@ -61,11 +61,11 @@ Per-sample signal path:
 
 ### Animation engine (`editor.rs`)
 
-Runs in the UI thread. `update_frame_buffer()` produces a `FrameBuffer` (46×36 chars + color/metadata) every frame from `AnimationParams` (RMS energy, transient flag, BPM, playing state). The V5 system has 9 layered features: temporal echo, DropPhase, hero lock, global field warping, intent rendering modes, per-preset signature behaviors, per-cell flicker, global activity reduction, and visual enhancements. All noise is hash-based (deterministic). No per-frame heap allocation in hot paths.
+Runs in the UI thread. `update_frame_buffer()` produces a `FrameBuffer` (54×42 chars + color/metadata) every frame from `AnimationParams` (RMS energy, transient flag, BPM, playing state). The V6 system has 9 layered features: temporal echo, DropPhase, hero lock, global field warping, intent rendering modes, per-preset signature behaviors, per-cell flicker, global activity reduction, and visual enhancements. All noise is hash-based (deterministic). No per-frame heap allocation in hot paths.
 
 ### Image system
 
-`ascii.txt` contains 38 ASCII art images separated by `#N` markers. `AsciiBank` parses these at startup. Images cycle every 2 bars (BPM-synced); overlays cycle at 1.5–3.0 bar intervals. Images larger than the 46×36 viewport pan across their full extent.
+`ascii.txt` contains 100 ASCII art images separated by `#N` markers. `AsciiBank` parses these at startup. Images cycle every 2 bars (BPM-synced); overlays cycle at 1.5–3.0 bar intervals. Images larger than the 54×42 viewport pan across their full extent.
 
 ### Hardware preset modeling
 
@@ -77,10 +77,10 @@ Each of the 7 machine presets has a `VisualProfile` (14 fields controlling motio
 - All hash/noise must be deterministic (LCG RNG seeded per-block, not time-based)
 - Filter biquads use Direct Form II Transposed with NaN guards
 - The UI overlay (title + menu) is never written into the `FrameBuffer` — it's drawn on top in `ascii_image_display.rs`
-- Window is 422×600 px; grid is 46×36 characters using FiraCode Nerd Font (embedded TTF)
+- Window is 422×600 px; grid is 54×42 characters using FiraCode Nerd Font (embedded TTF)
 
 ## Documentation
 
-- `docs/ASCII_ANIMATION_SYSTEM.md` — full V4 architecture reference (still accurate for V5 base)
+- `docs/ASCII_ANIMATION_SYSTEM.md` — full V6 architecture reference
 - `docs/superpowers/specs/2026-03-23-ascii-animation-v5-design.md` — V5 design spec
 - `docs/filter-research.md` — hardware filter specs with sources

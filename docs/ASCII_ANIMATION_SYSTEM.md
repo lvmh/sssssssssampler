@@ -3,6 +3,8 @@
 Visual engine for sssssssssampler — a responsive visual instrument driven by audio and interaction.
 
 > **V6** adds braille sub-cell effects (spark burst, edge fringe, background grain) and two new dust modes (vertical rain, beat ring pulse). Together these bring the total effect count to 21 visual layers across 9 integrated modules.
+>
+> **V6.1** makes all effects braille-reactive: GlitchBloom, Corruption, Collapse, and Jitter now mutate braille dot patterns (XOR/AND/shift) instead of replacing braille with ASCII. Density alpha uses dot-count/8 for braille cells. The `should_update` quantization gate now applies to braille identically to ASCII — braille art flickers and stutters with bandwidth.
 
 ---
 
@@ -71,36 +73,40 @@ The entire VST window is the ASCII display — no header, no bottom controls. Al
 
 ---
 
-## CHARSET (380 chars)
+## CHARSET (390 chars)
 
 ```
 0–83:    Standard ASCII, artwork-safe (exact match preserved)
 84–86:   Additional ASCII from source images: " m 8
 87–93:   Digit chars found in images: 2 3 4 5 6 7 9
-94–105:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
-106–123: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬)
-124–379: Braille (U+2800–U+28FF, all 256 patterns in Unicode order)
+94–115:  Block elements (▏▎▖▗▘▝▍▚▞▌▐▄▀░▒▓▙▛▜▟▇█)
+116–133: Box drawing (─│┌┐└┘├┤┬┴┼═║╔╗╚╝╬ …)
+134–389: Braille (U+2800–U+28FF, all 256 patterns in Unicode order)
 ```
 
-`ASCII_CHARSET_LEN = 124` — hard boundary between non-braille and braille. All effects that
-should never emit braille clamp to this constant. Braille effects explicitly select indices ≥ 124.
+`ASCII_CHARSET_LEN = 116` — random-effect upper boundary. Effects that should never emit
+box-drawing or braille (bloom shape chars, dust glyphs) clamp to this. Box-drawing chars
+(116–133) render as visible structural lines and look bad as glitch noise.
+
+`BRAILLE_CHARSET_START = 134` — first braille index. Used by all braille-aware effect
+branches; effects check `idx >= BRAILLE_CHARSET_START` to detect braille cells.
 
 **Single-dot braille indices** (1 bit set — one isolated dot per cell):
 ```
-125 = ⠁ (dot 1)   126 = ⠂ (dot 2)   128 = ⠄ (dot 3)   132 = ⠈ (dot 4)
-140 = ⠐ (dot 5)   156 = ⠠ (dot 6)   188 = ⡀ (dot 7)   252 = ⢀ (dot 8)
+135 = ⠁ (dot 1)   136 = ⠂ (dot 2)   138 = ⠄ (dot 3)   142 = ⠈ (dot 4)
+150 = ⠐ (dot 5)   166 = ⠠ (dot 6)   198 = ⡀ (dot 7)   262 = ⢀ (dot 8)
 ```
 
 **Two-dot braille indices** (2 bits set — used by beat ring pulse):
 ```
-127 = ⠃   129 = ⠅   133 = ⠉   158 = ⠢   189 = ⡁   253 = ⢁
+137 = ⠃   139 = ⠅   143 = ⠉   168 = ⠢   199 = ⡁   263 = ⢁
 ```
 
 ---
 
 ## Image Source
 
-All images loaded from **`ascii.txt`** (root directory) using `#N` separator format. Currently **38 images**. Parsed at startup by `AsciiBank::from_ascii_txt()`. Native resolution — no resizing. `get_cell()` returns 0 for out-of-bounds. Oversized images viewport/pan across their full extent. Each image has computed `density` (non-space fraction) and `complexity` (edge transitions) used for biased selection.
+All images loaded from **`ascii.txt`** (root directory) using `#N` separator format. Currently **100 images**. Parsed at startup by `AsciiBank::from_ascii_txt()`. Native resolution — no resizing. `get_cell()` returns 0 for out-of-bounds. Oversized images viewport/pan across their full extent. Each image has computed `density` (non-space fraction) and `complexity` (edge transitions) used for biased selection.
 
 ---
 
@@ -212,7 +218,7 @@ Trigger: transient + energy > 0.6
 Duration: 15–25 frames, then → Afterglow
 ```
 
-Expanding bloom radius from a seed cell, using block/box drawing chars in `palette.emphasis` color.
+Expanding bloom radius from a seed cell. For ASCII/block cells: substitutes block/box drawing chars in `palette.emphasis` color. For braille cells (≥ 134): XORs the dot-bit pattern with the bloom seed — scrambles the braille pattern reactively while color tint still applies.
 
 ### Bloom shape 0 — Rectangle
 
@@ -270,6 +276,10 @@ Trigger: bit depth < 12
 3-octave FBM hash: octave 1 (scale 0.15, w 0.5) + octave 2 (0.3, 0.3) + octave 3 (0.6, 0.2)
 ```
 
+For braille cells (≥ 134): XORs dot bits with a corruption seed. Flip mask scales with tier:
+tier 1 = low 4 bits (subtle), tier 2 = low 6 bits (moderate), tier 3 = all 8 bits (heavy).
+Emphasis color tint applies identically regardless of ASCII or braille.
+
 ### Glitch style 0 — Mixed
 
 Full CHARSET range, emphasizing heavy density chars:
@@ -323,7 +333,7 @@ Trigger: exiting PEAK state
 Duration: 25 frames
 ```
 
-Coherent noise progressively zeroes cells. Image dissolves from noisy regions inward:
+Coherent noise progressively removes cells. For ASCII cells: zeroes the index. For braille cells: ANDs the dot-bit pattern with a noise-derived mask — thins the dot count gradually before full disappearance. Image dissolves from noisy regions inward:
 
 ```
 frame 0:      frame 8:       frame 16:      frame 24:
@@ -453,7 +463,7 @@ frame -1: motion → frame 0: FREEZE (+brightness) → frame +12: UNFREEZE → A
 Trigger: is_base cell + should_update frame + 0.2% roll per frame
 ```
 
-Rare single-char flicker where an art character shifts ±1 density index. Each cell flickers at most once per quantization window. Gives life to otherwise-static cells without compromising art integrity.
+Rare single-char flicker where an art character shifts ±1 density index. For braille cells: flips one random dot bit (XOR with a single-bit mask) instead of ±1 index shift. Each cell flickers at most once per quantization window. Braille follows the same `should_update` gate as ASCII — cells go dark on held frames and only shimmer on update frames.
 
 ```
 normal:    S  ---→  momentary:   T   (one step denser, same position)
@@ -650,7 +660,7 @@ coherent_noise ≤ filter_val → alpha 1.0  [full]
 | **Filter** | 0–1 | Structural visibility (coherent masking on core + overlays) |
 | **Mix** | 0–1 | Overlay density (2%→100%) + speed + max 80% alpha |
 | **Bit Depth** | 1–24 | Tiered corruption: 16-12=clean, 11-9=point, 8-6=cluster, 5-4=structural |
-| **Jitter** | 0–1 | No direct visual effect |
+| **Jitter** | 0–1 | Temporal flicker: randomly zeroes cells. Braille: coin-flip between halving dot count or full dropout |
 | **BPM** | host | All timing: cycling, update cap, ring pulse, rain speed |
 | **Playing** | host | Images freeze. Dust + grain + rain + ring keep moving. |
 
@@ -748,7 +758,7 @@ ring_frames: u32     // 20-frame countdown, set on transient — drives beat rin
 
 | File | Purpose |
 |------|---------|
-| `ascii.txt` | 38 ASCII art images (`#N` separated) |
+| `ascii.txt` | 100 ASCII art images (`#N` separated) |
 | `src/editor.rs` | Full animation engine — all 9 modules |
 | `src/ascii_image_display.rs` | femtovg rendering, UI overlay, mouse interaction |
 | `src/ascii_bank.rs` | CHARSET (380 chars incl. braille), image parsing |
