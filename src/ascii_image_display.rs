@@ -628,10 +628,13 @@ impl View for AsciiImageDisplay {
                 } else { (180, 180, 180, 14, 14, 20) }
             } else { (180, 180, 180, 14, 14, 20) };
 
-            // Full-window background fill so the host doesn't show through
-            let mut full_bg = vg::Path::new();
-            full_bg.rect(bounds.x, bounds.y, bounds.w, bounds.h);
-            canvas.fill_path(&mut full_bg, &vg::Paint::color(vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8)));
+            // Full-window background: clear_rect writes directly to the framebuffer,
+            // bypassing compositing — guarantees no host white showing through.
+            canvas.clear_rect(
+                bounds.x as u32, bounds.y as u32,
+                bounds.w as u32, bounds.h as u32,
+                vg::Color::rgba(br, bg_c, bb, (255.0 * alpha) as u8),
+            );
 
             // Three dots, horizontally spaced like the title text chars
             let spacing = cell_w * 1.2;
